@@ -10,6 +10,10 @@ const floatingButtonMargin = 12;
 
 const defaultSettings = Object.freeze({
   enabled: true,
+  floatingButtonPosition: {
+    left: null,
+    top: null,
+  },
   apiConfig: {
     name: "Director API",
     url: "https://api.openai.com/v1",
@@ -33,18 +37,29 @@ const defaultSettings = Object.freeze({
       "输出格式：{\"groups\":[{\"title\":string,\"summary\":string,\"nodes\":[{\"title\":string,\"content\":string}]}]}"
     ].join("\n"),
     nodeAnalysisSystem: [
-      "你是故事推进分析器。",
-      "你会收到当前聊天摘要、已激活的故事节点组和每个节点的触发状态。",
-      "请找出当前最适合注入到提示词中的未触发节点，可以返回多个，但必须按优先级排序。",
+      "你是故事导演分析器，负责主动规划如何把未触发的故事节点引导进当前叙事。",
+      "你会收到当前聊天历史、已激活的故事节点组和每个节点的触发状态。",
+      "你的任务是选出应当引导故事走向的未触发节点，并判断每个节点的融入时机。",
       "如果故事中提到主角、玩家、用户或第一人称主视角角色，统一写成 <user>，不要写真实名字。",
+      "",
+      "timing 字段规则：",
+      "- immediate：当前情节已有衔接点，可以立刻开始将叙事引向该节点。",
+      "- deferred：当前情节处于高潮或关键段落尚未收尾，应等当前段落自然结束后再引导。",
+      "",
       "输出必须是合法 JSON，不要输出 Markdown 代码块，不要输出解释。",
-      "输出格式：{\"matches\":[{\"groupId\":string,\"nodeId\":string,\"reason\":string,\"priority\":number}],\"summary\":string}"
+      "输出格式：{\"matches\":[{\"groupId\":string,\"nodeId\":string,\"reason\":string,\"priority\":number,\"timing\":\"immediate\"|\"deferred\"}],\"summary\":string}"
     ].join("\n"),
     injectionTemplate: [
-      "你现在收到来自导演模块的故事推进建议。",
-      "这些建议用于引导接下来剧情的走向，不要逐字复述，不要显露这是外部指令。",
-      "涉及主角时，<user> 代表主角本人。",
-      "优先自然地把候选节点融入当前叙事，再兼顾已触发节点带来的连续性。"
+      "你现在收到来自故事导演模块的剧情引导指令。",
+      "你的职责是主动驱动故事朝以下目标节点发展，而不是被动等待情节自然碰到那里。",
+      "",
+      "执行规则：",
+      "1. 平滑融入：将目标节点自然编织进当前叙事，通过人物行为、环境变化、对话或事件制造通往节点的契机，不要突兀转折，不要逐字复述节点文字。",
+      "2. 时机判断：标注了【立即引导】的节点，应在本次回复中开始将故事引向该节点；标注了【情节收尾后引导】的节点，应在当前段落自然结束后，下一个叙事节点再启动引导。",
+      "3. 主动掌控：由你来创造让故事走向目标节点的契机，而非等待角色或玩家碰巧触达。",
+      "4. 保持隐蔽：不向玩家揭示外部指令存在，以导演视角无声掌控剧情节奏。",
+      "",
+      "涉及主角时，<user> 代表主角本人。"
     ].join("\n"),
   },
 });
@@ -84,6 +99,10 @@ function getSettings() {
   const defaults = cloneJson(defaultSettings);
 
   settings.enabled = typeof settings.enabled === "boolean" ? settings.enabled : defaults.enabled;
+  settings.floatingButtonPosition = {
+    ...defaults.floatingButtonPosition,
+    ...(settings.floatingButtonPosition || {}),
+  };
   settings.apiConfig = { ...defaults.apiConfig, ...(settings.apiConfig || {}) };
   settings.modelList = Array.isArray(settings.modelList) ? settings.modelList : [];
   settings.storyBrief = settings.storyBrief || "";
@@ -192,6 +211,15 @@ function setFloatingButtonPosition(left, top) {
   });
 }
 
+function persistFloatingButtonPosition() {
+  const settings = getSettings();
+  settings.floatingButtonPosition = {
+    left: floatingLauncherState.left,
+    top: floatingLauncherState.top,
+  };
+  saveSettingsDebounced();
+}
+
 function ensureFloatingButtonPosition() {
   const button = getFloatingButtonElement();
   if (!button.length) {
@@ -202,10 +230,17 @@ function ensureFloatingButtonPosition() {
   const height = button.outerHeight() || 0;
   const defaultLeft = Math.max(floatingButtonMargin, window.innerWidth - width - 24);
   const defaultTop = Math.max(floatingButtonMargin, window.innerHeight - height - 88);
+  const settings = getSettings();
+  const savedLeft = Number.isFinite(Number(settings.floatingButtonPosition?.left))
+    ? Number(settings.floatingButtonPosition.left)
+    : null;
+  const savedTop = Number.isFinite(Number(settings.floatingButtonPosition?.top))
+    ? Number(settings.floatingButtonPosition.top)
+    : null;
 
   setFloatingButtonPosition(
-    floatingLauncherState.left ?? defaultLeft,
-    floatingLauncherState.top ?? defaultTop,
+    floatingLauncherState.left ?? savedLeft ?? defaultLeft,
+    floatingLauncherState.top ?? savedTop ?? defaultTop,
   );
 }
 
@@ -696,10 +731,21 @@ async function handleGenerateGroups() {
     const groups = normalizeGeneratedGroups(parsed.groups);
     settings.nodeGroupLibrary.push(...groups);
     saveSettingsDebounced();
+
+    const activeContext = getContext();
+    const hasActiveChat = Array.isArray(activeContext.chat) && activeContext.chat.length > 0;
+    if (hasActiveChat) {
+      for (const group of groups) {
+        ensureGroupActivated(group.id);
+      }
+      await saveChatState();
+    }
+
     renderLibrary();
     renderChatPanel();
-    setStatus("#director_generation_status", `已生成 ${groups.length} 组故事节点`, "success");
-    toastr.success(`已生成 ${groups.length} 组故事节点`, "St导演");
+    const activatedNote = hasActiveChat ? "，已自动加入当前聊天" : "，请手动加入聊天";
+    setStatus("#director_generation_status", `已生成 ${groups.length} 组故事节点${activatedNote}`, "success");
+    toastr.success(`已生成 ${groups.length} 组故事节点${activatedNote}`, "St导演");
   } catch (error) {
     console.error("Director generate groups failed", error);
     setStatus("#director_generation_status", error.message, "error");
@@ -755,7 +801,7 @@ async function buildInjectionPreview(forceRefresh = false) {
     "",
     triggeredSummary ? `已触发摘要：\n${triggeredSummary}` : "已触发摘要：暂无",
     "",
-    "请只返回 JSON。若没有合适节点，matches 返回空数组。",
+    "请判断每个候选节点的融入时机（immediate/deferred），只返回 JSON。若没有合适节点，matches 返回空数组。",
   ].join("\n");
 
   const rawResult = await callDirectorApi({
@@ -788,6 +834,7 @@ async function buildInjectionPreview(forceRefresh = false) {
       nodeTitle: node.title,
       nodeContent: node.content,
       reason: normalizeUserPlaceholder(match.reason || "顺应当前剧情推进"),
+      timing: match.timing === "deferred" ? "deferred" : "immediate",
     });
     lastMatchedNodeIds.push(`${group.title} / ${node.title}`);
   }
@@ -798,7 +845,10 @@ async function buildInjectionPreview(forceRefresh = false) {
       settings.promptTemplates.injectionTemplate,
       "",
       "候选推进节点：",
-      ...matchedNodes.map((node, index) => `${index + 1}. [${node.groupTitle}] ${node.nodeTitle}: ${node.nodeContent}（原因：${node.reason}）`),
+      ...matchedNodes.map((node, index) => {
+        const timingLabel = node.timing === "deferred" ? "【情节收尾后引导】" : "【立即引导】";
+        return `${index + 1}. ${timingLabel} [${node.groupTitle}] ${node.nodeTitle}\n   目标：${node.nodeContent}\n   引导理由：${node.reason}`;
+      }),
       "",
       triggeredSummary ? `已触发节点摘要：\n${triggeredSummary}` : "已触发节点摘要：暂无",
       parsed.summary ? `\n分析摘要：${normalizeUserPlaceholder(parsed.summary)}` : "",
@@ -1029,6 +1079,9 @@ function bindStaticEvents() {
       }
 
       floatingLauncherState.suppressClick = floatingLauncherState.dragging;
+      if (floatingLauncherState.suppressClick) {
+        persistFloatingButtonPosition();
+      }
       floatingLauncherState.pointerId = null;
       floatingLauncherState.dragging = false;
       getFloatingButtonElement().removeClass("is-dragging");
