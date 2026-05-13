@@ -44,11 +44,17 @@
 }
 
 .director-modal {
+	position: fixed;
+	inset: 0;
 	display: none;
+	align-items: center;
+	justify-content: center;
+	padding: 24px;
+	z-index: 3202;
 }
 
 .director-modal.is-open {
-	display: block;
+	display: flex;
 }
 
 body.director-modal-open {
@@ -56,19 +62,24 @@ body.director-modal-open {
 }
 
 .director-modal-backdrop {
-	display: none;
+	position: absolute;
+	inset: 0;
+	background: rgba(4, 10, 24, 0.62);
+	backdrop-filter: blur(6px);
 }
 
 .director-modal-dialog {
-	position: fixed;
-	inset: 0;
+	position: relative;
 	display: flex;
 	flex-direction: column;
-	border: none;
-	border-radius: 0;
+	width: min(1120px, calc(100vw - 48px));
+	max-height: calc(100vh - 48px);
+	border: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor, #777) 65%, transparent);
+	border-radius: 18px;
 	background: color-mix(in srgb, var(--SmartThemeBlurTintColor, #111) 90%, black 10%);
+	box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
 	overflow: hidden;
-	z-index: 3202;
+	z-index: 1;
 }
 
 .director-modal-header {
