@@ -6,6 +6,7 @@ const extensionFolderPath = `scripts/extensions/third-party/${extensionName}`;
 const chatMetadataKey = `${extensionName}:chat-state`;
 const injectionPosition = 0;
 const injectionDepth = 4;
+const floatingButtonMargin = 12;
 
 const defaultSettings = Object.freeze({
   enabled: true,
@@ -56,6 +57,19 @@ const defaultChatState = Object.freeze({
   lastAnalysisAt: 0,
   lastAnalysisSignature: "",
 });
+
+const floatingLauncherState = {
+  initialized: false,
+  pointerId: null,
+  originLeft: 0,
+  originTop: 0,
+  startX: 0,
+  startY: 0,
+  left: null,
+  top: null,
+  dragging: false,
+  suppressClick: false,
+};
 
 function cloneJson(value) {
   return JSON.parse(JSON.stringify(value));
@@ -115,6 +129,10 @@ function clampNumber(value, min, max, fallback) {
   return Math.min(max, Math.max(min, parsed));
 }
 
+function clampValue(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -146,6 +164,77 @@ function setStatus(selector, message, type = "info") {
     .removeClass("director-status-info director-status-success director-status-warning director-status-error")
     .addClass(`director-status-${type}`)
     .text(message || "");
+}
+
+function getFloatingButtonElement() {
+  return $("#director_floating_button");
+}
+
+function setFloatingButtonPosition(left, top) {
+  const button = getFloatingButtonElement();
+  if (!button.length) {
+    return;
+  }
+
+  const maxLeft = Math.max(floatingButtonMargin, window.innerWidth - button.outerWidth() - floatingButtonMargin);
+  const maxTop = Math.max(floatingButtonMargin, window.innerHeight - button.outerHeight() - floatingButtonMargin);
+  const nextLeft = clampValue(left, floatingButtonMargin, maxLeft);
+  const nextTop = clampValue(top, floatingButtonMargin, maxTop);
+
+  floatingLauncherState.left = nextLeft;
+  floatingLauncherState.top = nextTop;
+
+  button.css({
+    left: `${nextLeft}px`,
+    top: `${nextTop}px`,
+    right: "auto",
+    bottom: "auto",
+  });
+}
+
+function ensureFloatingButtonPosition() {
+  const button = getFloatingButtonElement();
+  if (!button.length) {
+    return;
+  }
+
+  const width = button.outerWidth() || 0;
+  const height = button.outerHeight() || 0;
+  const defaultLeft = Math.max(floatingButtonMargin, window.innerWidth - width - 24);
+  const defaultTop = Math.max(floatingButtonMargin, window.innerHeight - height - 88);
+
+  setFloatingButtonPosition(
+    floatingLauncherState.left ?? defaultLeft,
+    floatingLauncherState.top ?? defaultTop,
+  );
+}
+
+function openDirectorModal() {
+  const modal = $("#director_modal");
+  modal.addClass("is-open").attr("aria-hidden", "false");
+  $("body").addClass("director-modal-open");
+}
+
+function closeDirectorModal() {
+  const modal = $("#director_modal");
+  modal.removeClass("is-open").attr("aria-hidden", "true");
+  $("body").removeClass("director-modal-open");
+}
+
+function initializeFloatingLauncher() {
+  if (floatingLauncherState.initialized) {
+    ensureFloatingButtonPosition();
+    return;
+  }
+
+  floatingLauncherState.initialized = true;
+  ensureFloatingButtonPosition();
+
+  $(window)
+    .off("resize.directorLauncher")
+    .on("resize.directorLauncher", () => {
+      ensureFloatingButtonPosition();
+    });
 }
 
 function serializeConversation(messages) {
@@ -849,12 +938,100 @@ async function deleteGroup(groupId) {
 }
 
 function bindStaticEvents() {
+  initializeFloatingLauncher();
+
   $(document)
     .off("click", ".director-drawer-toggle")
     .on("click", ".director-drawer-toggle", function toggleDrawer() {
       const drawer = $(this).closest(".director-drawer");
       drawer.toggleClass("is-open");
       $(this).find(".inline-drawer-icon").toggleClass("down", drawer.hasClass("is-open"));
+    });
+
+  $(document)
+    .off("click.directorOpen", "#director_floating_button")
+    .on("click.directorOpen", "#director_floating_button", () => {
+      if (floatingLauncherState.suppressClick) {
+        floatingLauncherState.suppressClick = false;
+        return;
+      }
+      openDirectorModal();
+    });
+
+  $(document)
+    .off("click.directorClose", "#director_modal_close, [data-director-close='true']")
+    .on("click.directorClose", "#director_modal_close, [data-director-close='true']", () => {
+      closeDirectorModal();
+    });
+
+  $(document)
+    .off("keydown.directorModal")
+    .on("keydown.directorModal", (event) => {
+      if (event.key === "Escape" && $("#director_modal").hasClass("is-open")) {
+        closeDirectorModal();
+      }
+    });
+
+  $(document)
+    .off("pointerdown.directorDrag", "#director_floating_button")
+    .on("pointerdown.directorDrag", "#director_floating_button", function onPointerDown(event) {
+      const button = $(this);
+      const element = button.get(0);
+      if (!element) {
+        return;
+      }
+
+      ensureFloatingButtonPosition();
+      floatingLauncherState.pointerId = event.originalEvent.pointerId;
+      floatingLauncherState.startX = event.clientX;
+      floatingLauncherState.startY = event.clientY;
+      floatingLauncherState.originLeft = floatingLauncherState.left ?? (parseFloat(button.css("left")) || 0);
+      floatingLauncherState.originTop = floatingLauncherState.top ?? (parseFloat(button.css("top")) || 0);
+      floatingLauncherState.dragging = false;
+      floatingLauncherState.suppressClick = false;
+
+      if (typeof element.setPointerCapture === "function") {
+        element.setPointerCapture(floatingLauncherState.pointerId);
+      }
+    });
+
+  $(document)
+    .off("pointermove.directorDrag")
+    .on("pointermove.directorDrag", (event) => {
+      if (floatingLauncherState.pointerId === null || event.originalEvent.pointerId !== floatingLauncherState.pointerId) {
+        return;
+      }
+
+      const deltaX = event.clientX - floatingLauncherState.startX;
+      const deltaY = event.clientY - floatingLauncherState.startY;
+      if (!floatingLauncherState.dragging && Math.hypot(deltaX, deltaY) < 6) {
+        return;
+      }
+
+      floatingLauncherState.dragging = true;
+      getFloatingButtonElement().addClass("is-dragging");
+      setFloatingButtonPosition(
+        floatingLauncherState.originLeft + deltaX,
+        floatingLauncherState.originTop + deltaY,
+      );
+    });
+
+  $(document)
+    .off("pointerup.directorDrag pointercancel.directorDrag")
+    .on("pointerup.directorDrag pointercancel.directorDrag", "#director_floating_button", function onPointerUp(event) {
+      if (floatingLauncherState.pointerId === null || event.originalEvent.pointerId !== floatingLauncherState.pointerId) {
+        return;
+      }
+
+      const element = $(this).get(0);
+      if (element && typeof element.releasePointerCapture === "function") {
+        element.releasePointerCapture(floatingLauncherState.pointerId);
+      }
+
+      floatingLauncherState.suppressClick = floatingLauncherState.dragging;
+      floatingLauncherState.pointerId = null;
+      floatingLauncherState.dragging = false;
+      getFloatingButtonElement().removeClass("is-dragging");
     });
 
   $("#director_enabled, #director_connection_name, #director_api_url, #director_api_key, #director_story_brief, #director_group_count, #director_nodes_per_group, #director_generation_prompt, #director_analysis_prompt, #director_injection_prompt")
@@ -990,9 +1167,9 @@ globalThis.stDirectorGenerateInterceptor = async function stDirectorGenerateInte
 };
 
 jQuery(async () => {
-  $(".director-settings").remove();
+  $(".director-shell").remove();
   const settingsHtml = await $.get(`${extensionFolderPath}/director-settings.html`);
-  $("#extensions_settings").append(settingsHtml);
+  $("body").append(settingsHtml);
 
   getSettings();
   syncChatStateWithLibrary();

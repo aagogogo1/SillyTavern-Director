@@ -1,126 +1,148 @@
-<div class="director-settings">
-    <div class="director-drawer inline-drawer is-open">
-        <div class="director-drawer-toggle inline-drawer-toggle inline-drawer-header">
-            <b>导演模型连接</b>
-            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
-        </div>
-        <div class="inline-drawer-content director-drawer-content">
-            <label class="director-field-row director-inline-toggle">
-                <input id="director_enabled" type="checkbox" />
-                <span>启用导演插件</span>
-            </label>
+<div class="director-shell">
+    <button id="director_floating_button" class="director-floating-button" type="button" aria-label="打开导演面板">
+        <span class="director-floating-button-icon">导</span>
+        <span class="director-floating-button-text">导演</span>
+    </button>
 
-            <label class="director-field-row">
-                <span>连接名称</span>
-                <input id="director_connection_name" class="text_pole" type="text" placeholder="例如：Director API" />
-            </label>
-
-            <label class="director-field-row">
-                <span>Base URL</span>
-                <input id="director_api_url" class="text_pole" type="text" placeholder="https://api.openai.com/v1" />
-            </label>
-
-            <label class="director-field-row">
-                <span>API Key</span>
-                <input id="director_api_key" class="text_pole" type="password" placeholder="sk-..." />
-            </label>
-
-            <label class="director-field-row">
-                <span>模型名称</span>
-                <input id="director_model_name" class="text_pole" type="text" placeholder="可手动填写，也可从下方模型列表选择" />
-            </label>
-
-            <label class="director-field-row">
-                <span>已拉取模型列表</span>
-                <select id="director_model_select" class="text_pole"></select>
-            </label>
-
-            <div class="director-button-row">
-                <button id="director_save_connection" class="menu_button" type="button">保存连接配置</button>
-                <button id="director_fetch_models" class="menu_button" type="button">查询模型列表</button>
+    <div id="director_modal" class="director-modal" aria-hidden="true">
+        <div class="director-modal-backdrop" data-director-close="true"></div>
+        <div class="director-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="director_modal_title">
+            <div class="director-modal-header">
+                <div>
+                    <div id="director_modal_title" class="director-modal-title">导演面板</div>
+                    <div class="director-modal-subtitle">管理模型连接、故事节点和当前聊天注入。</div>
+                </div>
+                <button id="director_modal_close" class="director-modal-close" type="button" aria-label="关闭导演面板">×</button>
             </div>
 
-            <div id="director_connection_status" class="director-status director-status-info">先填写 URL 和 API Key，再查询模型列表。</div>
-        </div>
-    </div>
+            <div class="director-modal-body">
+                <div class="director-settings">
+                    <div class="director-drawer inline-drawer is-open">
+                        <div class="director-drawer-toggle inline-drawer-toggle inline-drawer-header">
+                            <b>导演模型连接</b>
+                            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+                        </div>
+                        <div class="inline-drawer-content director-drawer-content">
+                            <label class="director-field-row director-inline-toggle">
+                                <input id="director_enabled" type="checkbox" />
+                                <span>启用导演插件</span>
+                            </label>
 
-    <div class="director-drawer inline-drawer is-open">
-        <div class="director-drawer-toggle inline-drawer-toggle inline-drawer-header">
-            <b>故事节点生成</b>
-            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
-        </div>
-        <div class="inline-drawer-content director-drawer-content">
-            <label class="director-field-row">
-                <span>故事概要</span>
-                <textarea id="director_story_brief" class="text_pole" rows="5" placeholder="输入你想推进的大致故事内容。涉及主角时，生成结果会统一用 <user> 占位。"></textarea>
-            </label>
+                            <label class="director-field-row">
+                                <span>连接名称</span>
+                                <input id="director_connection_name" class="text_pole" type="text" placeholder="例如：Director API" />
+                            </label>
 
-            <div class="director-grid-two">
-                <label class="director-field-row">
-                    <span>生成组数</span>
-                    <input id="director_group_count" class="text_pole" type="number" min="1" max="8" />
-                </label>
+                            <label class="director-field-row">
+                                <span>Base URL</span>
+                                <input id="director_api_url" class="text_pole" type="text" placeholder="https://api.openai.com/v1" />
+                            </label>
 
-                <label class="director-field-row">
-                    <span>每组节点数</span>
-                    <input id="director_nodes_per_group" class="text_pole" type="number" min="1" max="8" />
-                </label>
+                            <label class="director-field-row">
+                                <span>API Key</span>
+                                <input id="director_api_key" class="text_pole" type="password" placeholder="sk-..." />
+                            </label>
+
+                            <label class="director-field-row">
+                                <span>模型名称</span>
+                                <input id="director_model_name" class="text_pole" type="text" placeholder="可手动填写，也可从下方模型列表选择" />
+                            </label>
+
+                            <label class="director-field-row">
+                                <span>已拉取模型列表</span>
+                                <select id="director_model_select" class="text_pole"></select>
+                            </label>
+
+                            <div class="director-button-row">
+                                <button id="director_save_connection" class="menu_button" type="button">保存连接配置</button>
+                                <button id="director_fetch_models" class="menu_button" type="button">查询模型列表</button>
+                            </div>
+
+                            <div id="director_connection_status" class="director-status director-status-info">先填写 URL 和 API Key，再查询模型列表。</div>
+                        </div>
+                    </div>
+
+                    <div class="director-drawer inline-drawer is-open">
+                        <div class="director-drawer-toggle inline-drawer-toggle inline-drawer-header">
+                            <b>故事节点生成</b>
+                            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+                        </div>
+                        <div class="inline-drawer-content director-drawer-content">
+                            <label class="director-field-row">
+                                <span>故事概要</span>
+                                <textarea id="director_story_brief" class="text_pole" rows="5" placeholder="输入你想推进的大致故事内容。涉及主角时，生成结果会统一用 <user> 占位。"></textarea>
+                            </label>
+
+                            <div class="director-grid-two">
+                                <label class="director-field-row">
+                                    <span>生成组数</span>
+                                    <input id="director_group_count" class="text_pole" type="number" min="1" max="8" />
+                                </label>
+
+                                <label class="director-field-row">
+                                    <span>每组节点数</span>
+                                    <input id="director_nodes_per_group" class="text_pole" type="number" min="1" max="8" />
+                                </label>
+                            </div>
+
+                            <details class="director-advanced-prompts">
+                                <summary>高级提示词设置</summary>
+
+                                <label class="director-field-row">
+                                    <span>节点生成系统提示词</span>
+                                    <textarea id="director_generation_prompt" class="text_pole" rows="8"></textarea>
+                                </label>
+
+                                <label class="director-field-row">
+                                    <span>节点分析系统提示词</span>
+                                    <textarea id="director_analysis_prompt" class="text_pole" rows="8"></textarea>
+                                </label>
+
+                                <label class="director-field-row">
+                                    <span>最终注入模板</span>
+                                    <textarea id="director_injection_prompt" class="text_pole" rows="6"></textarea>
+                                </label>
+                            </details>
+
+                            <div class="director-button-row">
+                                <button id="director_generate_groups" class="menu_button" type="button">生成故事节点组</button>
+                            </div>
+
+                            <div id="director_generation_status" class="director-status director-status-info">节点组会保存到全局节点库，再由当前聊天手动激活。</div>
+
+                            <div class="director-section-title">全局节点库</div>
+                            <div id="director_library_groups" class="director-library-list"></div>
+                        </div>
+                    </div>
+
+                    <div class="director-drawer inline-drawer is-open">
+                        <div class="director-drawer-toggle inline-drawer-toggle inline-drawer-header">
+                            <b>当前聊天激活与注入</b>
+                            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+                        </div>
+                        <div class="inline-drawer-content director-drawer-content">
+                            <div id="director_chat_scope" class="director-chat-scope"></div>
+
+                            <div class="director-button-row">
+                                <button id="director_run_analysis" class="menu_button" type="button">根据历史分析当前节点</button>
+                            </div>
+
+                            <div id="director_analysis_status" class="director-status director-status-info">点击上面的按钮可立即刷新候选节点；正常生成前也会自动分析。</div>
+
+                            <div class="director-section-title">当前聊天已激活节点组</div>
+                            <div id="director_active_groups" class="director-active-groups"></div>
+
+                            <div class="director-section-title">最近命中的节点</div>
+                            <div id="director_last_matches" class="director-chip-list"></div>
+
+                            <label class="director-field-row">
+                                <span>注入预览</span>
+                                <textarea id="director_injection_preview" class="text_pole" rows="10" readonly></textarea>
+                            </label>
+                        </div>
+                    </div>
+                </div>
             </div>
-
-            <details class="director-advanced-prompts">
-                <summary>高级提示词设置</summary>
-
-                <label class="director-field-row">
-                    <span>节点生成系统提示词</span>
-                    <textarea id="director_generation_prompt" class="text_pole" rows="8"></textarea>
-                </label>
-
-                <label class="director-field-row">
-                    <span>节点分析系统提示词</span>
-                    <textarea id="director_analysis_prompt" class="text_pole" rows="8"></textarea>
-                </label>
-
-                <label class="director-field-row">
-                    <span>最终注入模板</span>
-                    <textarea id="director_injection_prompt" class="text_pole" rows="6"></textarea>
-                </label>
-            </details>
-
-            <div class="director-button-row">
-                <button id="director_generate_groups" class="menu_button" type="button">生成故事节点组</button>
-            </div>
-
-            <div id="director_generation_status" class="director-status director-status-info">节点组会保存到全局节点库，再由当前聊天手动激活。</div>
-
-            <div class="director-section-title">全局节点库</div>
-            <div id="director_library_groups" class="director-library-list"></div>
-        </div>
-    </div>
-
-    <div class="director-drawer inline-drawer is-open">
-        <div class="director-drawer-toggle inline-drawer-toggle inline-drawer-header">
-            <b>当前聊天激活与注入</b>
-            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
-        </div>
-        <div class="inline-drawer-content director-drawer-content">
-            <div id="director_chat_scope" class="director-chat-scope"></div>
-
-            <div class="director-button-row">
-                <button id="director_run_analysis" class="menu_button" type="button">根据历史分析当前节点</button>
-            </div>
-
-            <div id="director_analysis_status" class="director-status director-status-info">点击上面的按钮可立即刷新候选节点；正常生成前也会自动分析。</div>
-
-            <div class="director-section-title">当前聊天已激活节点组</div>
-            <div id="director_active_groups" class="director-active-groups"></div>
-
-            <div class="director-section-title">最近命中的节点</div>
-            <div id="director_last_matches" class="director-chip-list"></div>
-
-            <label class="director-field-row">
-                <span>注入预览</span>
-                <textarea id="director_injection_preview" class="text_pole" rows="10" readonly></textarea>
-            </label>
         </div>
     </div>
 </div>
