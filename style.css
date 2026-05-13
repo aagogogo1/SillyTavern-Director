@@ -132,8 +132,25 @@ body.director-modal-open {
 }
 
 .director-modal-body {
+	flex: 1 1 auto;
 	overflow: auto;
 	padding: 20px 22px 24px;
+}
+
+.director-modal-footer {
+	display: flex;
+	justify-content: flex-end;
+	align-items: center;
+	gap: 12px;
+	padding: 14px 22px 18px;
+	border-top: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor, #777) 55%, transparent);
+	background: color-mix(in srgb, var(--SmartThemeBlurTintColor, #111) 94%, black 6%);
+	box-shadow: 0 -8px 20px rgba(0, 0, 0, 0.12);
+	flex-shrink: 0;
+}
+
+.director-modal-footer-close {
+	min-width: 112px;
 }
 
 .director-settings {
@@ -320,7 +337,8 @@ body.director-modal-open {
 	}
 
 	.director-modal-header,
-	.director-modal-body {
+	.director-modal-body,
+	.director-modal-footer {
 		padding-left: 14px;
 		padding-right: 14px;
 	}

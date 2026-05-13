@@ -959,8 +959,8 @@ function bindStaticEvents() {
     });
 
   $(document)
-    .off("click.directorClose", "#director_modal_close, [data-director-close='true']")
-    .on("click.directorClose", "#director_modal_close, [data-director-close='true']", () => {
+    .off("click.directorClose", "#director_modal_close, #director_modal_close_bottom, [data-director-close='true']")
+    .on("click.directorClose", "#director_modal_close, #director_modal_close_bottom, [data-director-close='true']", () => {
       closeDirectorModal();
     });
 
