@@ -588,7 +588,7 @@ function renderLibrary() {
             <textarea class="text_pole director-group-summary" rows="2" placeholder="该组概述">${escapeHtml(group.summary || "")}</textarea>
           </div>
           <div class="director-group-actions">
-            <button class="menu_button director-toggle-active" data-group-id="${escapeHtml(group.id)}" type="button">${active ? "移出当前聊天" : "加入当前聊天"}</button>
+            <button class="menu_button director-toggle-active" data-group-id="${escapeHtml(group.id)}" type="button">${active ? "从聊天移除" : "加入聊天"}</button>
             <button class="menu_button director-delete-group" data-group-id="${escapeHtml(group.id)}" type="button">删除整组</button>
           </div>
         </div>
@@ -615,7 +615,10 @@ function renderChatPanel() {
       <div class="director-card director-active-card" data-group-id="${escapeHtml(group.id)}">
         <div class="director-active-header">
           <strong>${escapeHtml(group.title)}</strong>
-          <span class="director-chip">${group.nodes.filter((node) => node.triggered).length}/${group.nodes.length} 已触发</span>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <span class="director-chip">${group.nodes.filter((node) => node.triggered).length}/${group.nodes.length} 已触发</span>
+            <button class="menu_button director-toggle-active" data-group-id="${escapeHtml(group.id)}" type="button" style="padding:2px 10px;font-size:0.82rem;">从聊天移除</button>
+          </div>
         </div>
         <div class="director-active-summary">${escapeHtml(group.summary || "")}</div>
         <div class="director-node-state-list">
