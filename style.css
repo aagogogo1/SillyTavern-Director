@@ -10,8 +10,8 @@
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	width: 56px;
-	height: 56px;
+	width: 44px;
+	height: 44px;
 	padding: 0;
 	border: 1px solid rgba(57, 138, 255, 0.28);
 	border-radius: 50%;
@@ -38,15 +38,9 @@
 }
 
 .director-floating-button-icon {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: 100%;
-	height: 100%;
-	border-radius: 50%;
-	background: rgba(255, 255, 255, 0.12);
-	font-size: 1.2rem;
+	font-size: 1.15rem;
 	line-height: 1;
+	pointer-events: none;
 }
 
 .director-modal {
@@ -318,10 +312,84 @@ body.director-modal-open {
 	margin-bottom: 8px;
 }
 
+/* ── 按钮配色覆盖 ─────────────────────────────────────────── */
+
+/* 主要操作：生成故事节点组、根据历史分析、保存连接 */
+#director_generate_groups,
+#director_run_analysis,
+#director_save_connection {
+	background: linear-gradient(135deg, #2563eb, #1d4ed8) !important;
+	border-color: rgba(96, 165, 250, 0.5) !important;
+	color: #fff !important;
+	font-weight: 700;
+	box-shadow: 0 2px 10px rgba(37, 99, 235, 0.35);
+	transition: filter 0.15s ease, box-shadow 0.15s ease;
+}
+
+#director_generate_groups:hover,
+#director_run_analysis:hover,
+#director_save_connection:hover {
+	filter: brightness(1.12);
+	box-shadow: 0 4px 16px rgba(37, 99, 235, 0.5);
+}
+
+/* 最突出的生成按钮加上橙色光晕，进一步区分 */
+#director_generate_groups {
+	background: linear-gradient(135deg, #ea580c, #c2410c) !important;
+	border-color: rgba(251, 146, 60, 0.5) !important;
+	box-shadow: 0 2px 10px rgba(234, 88, 12, 0.4);
+}
+
+#director_generate_groups:hover {
+	box-shadow: 0 4px 18px rgba(234, 88, 12, 0.6);
+}
+
+/* 次要操作：查询模型列表 */
+#director_fetch_models {
+	background: linear-gradient(135deg, #0891b2, #0e7490) !important;
+	border-color: rgba(34, 211, 238, 0.4) !important;
+	color: #fff !important;
+	box-shadow: 0 2px 8px rgba(8, 145, 178, 0.3);
+	transition: filter 0.15s ease;
+}
+
+#director_fetch_models:hover {
+	filter: brightness(1.12);
+}
+
+/* 激活节点组 / 移出当前聊天 */
+.director-toggle-active {
+	background: linear-gradient(135deg, #059669, #047857) !important;
+	border-color: rgba(52, 211, 153, 0.4) !important;
+	color: #fff !important;
+	font-weight: 600;
+	box-shadow: 0 2px 8px rgba(5, 150, 105, 0.3);
+	transition: filter 0.15s ease;
+}
+
+.director-toggle-active:hover {
+	filter: brightness(1.12);
+}
+
+/* 危险操作：删除节点、删除整组 */
+.director-delete-node,
+.director-delete-group {
+	background: linear-gradient(135deg, #dc2626, #b91c1c) !important;
+	border-color: rgba(248, 113, 113, 0.4) !important;
+	color: #fff !important;
+	box-shadow: 0 2px 8px rgba(220, 38, 38, 0.3);
+	transition: filter 0.15s ease;
+}
+
+.director-delete-node:hover,
+.director-delete-group:hover {
+	filter: brightness(1.12);
+}
+
 @media (max-width: 700px) {
 	.director-floating-button {
-		width: 52px;
-		height: 52px;
+		width: 40px;
+		height: 40px;
 	}
 
 	.director-modal {
