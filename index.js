@@ -703,7 +703,6 @@ function renderModelSelectFor(apiType) {
 function renderChatPanel() {
   const context = getContext();
   const state = syncChatStateWithLibrary();
-  archiveResolvedGroups();
   const { antiSpoiler } = getSettings();
   const chatName = context?.name2 || context?.groupId || "当前会话";
 
@@ -1266,6 +1265,8 @@ async function handleTriggerToggle(groupId, nodeId, checked) {
   state.activationStateByGroup[groupId] = groupState;
   state.lastAnalysisSignature = "";
   await checkAndAutoGeneratePlot();
+  archiveResolvedGroups();
+  await saveChatState();
   await buildInjectionPreview(true);
   renderChatPanel();
 }
@@ -1354,6 +1355,17 @@ async function unarchiveGroup(groupId) {
   state.archivedGroupIds = state.archivedGroupIds.filter((id) => id !== groupId);
   if (!state.activeGroupIds.includes(groupId)) {
     state.activeGroupIds.push(groupId);
+  }
+  // 恢复时重置过期节点为待处理，避免立刻再次归档
+  const groupState = state.activationStateByGroup[groupId];
+  if (groupState?.nodeStateById) {
+    for (const nodeId of Object.keys(groupState.nodeStateById)) {
+      const ns = normalizeNodeState(groupState.nodeStateById[nodeId]);
+      if (ns.expired) {
+        ns.expired = false;
+        groupState.nodeStateById[nodeId] = ns;
+      }
+    }
   }
   await saveChatState();
   renderChatPanel();
@@ -1718,6 +1730,8 @@ async function handleAfterCharacterMessage() {
   if (!settings.enabled) return;
   try {
     await analyzeNodeCompletion();
+    archiveResolvedGroups();
+    await saveChatState();
     await buildInjectionPreview(true);
     await checkAndAutoGeneratePlot();
     renderChatPanel();
