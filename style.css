@@ -463,22 +463,6 @@ body.director-modal-open {
 	background: color-mix(in srgb, var(--SmartThemeBorderColor, #777) 22%, transparent);
 }
 
-.director-advanced-prompts > summary {
-	cursor: pointer;
-	padding: 6px 8px;
-	border-radius: 8px;
-	transition: background 0.15s ease;
-	user-select: none;
-}
-
-.director-advanced-prompts > summary:hover {
-	background: color-mix(in srgb, var(--SmartThemeBorderColor, #777) 14%, transparent);
-}
-
-.director-advanced-prompts > summary:active {
-	background: color-mix(in srgb, var(--SmartThemeBorderColor, #777) 24%, transparent);
-}
-
 /* ── 按钮配色覆盖 ─────────────────────────────────────────── */
 
 /* 主要操作：生成故事节点组、根据历史分析、保存连接 */
@@ -523,6 +507,21 @@ body.director-modal-open {
 }
 
 /* 激活节点组 / 移出当前聊天 */
+/* 重新生成按钮 */
+.director-retry-plot {
+	background: linear-gradient(135deg, #d97706, #b45309) !important;
+	border-color: rgba(251, 191, 36, 0.4) !important;
+	color: #fff !important;
+	box-shadow: 0 2px 8px rgba(217, 119, 6, 0.3);
+	transition: filter 0.15s ease;
+	padding: 2px 10px;
+	font-size: 0.82rem;
+}
+
+.director-retry-plot:hover {
+	filter: brightness(1.12);
+}
+
 /* 移除情节按钮 */
 .director-remove-plot {
 	background: linear-gradient(135deg, #dc2626, #b91c1c) !important;
@@ -670,10 +669,6 @@ body.director-modal-open {
 	.director-card {
 		padding: 8px;
 	}
-
-	.director-advanced-prompts {
-		margin-top: 8px;
-	}
 }
 
 /* ========== 情节卡片 ========== */
@@ -771,4 +766,11 @@ body.director-modal-open {
 .director-chip-error {
 	background: rgba(220, 74, 74, 0.12);
 	border-color: rgba(220, 74, 74, 0.3);
+}
+
+.director-plot-error-msg {
+	padding: 4px 12px 10px;
+	font-size: 0.8rem;
+	color: rgba(220, 74, 74, 0.9);
+	word-break: break-all;
 }

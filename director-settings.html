@@ -108,21 +108,27 @@
                                 <textarea id="director_injection_preview" class="text_pole" rows="10" readonly></textarea>
                             </label>
 
-                            <details class="director-advanced-prompts">
-                                <summary>高级提示词设置</summary>
-                                <label class="director-field-row">
-                                    <span>情节节点生成系统提示词</span>
-                                    <textarea id="director_generation_prompt" class="text_pole" rows="8"></textarea>
-                                </label>
-                                <label class="director-field-row">
-                                    <span>节点分析系统提示词</span>
-                                    <textarea id="director_analysis_prompt" class="text_pole" rows="8"></textarea>
-                                </label>
-                                <label class="director-field-row">
-                                    <span>最终注入模板</span>
-                                    <textarea id="director_injection_prompt" class="text_pole" rows="6"></textarea>
-                                </label>
-                            </details>
+                        </div>
+                    </div>
+
+                    <div class="director-drawer inline-drawer">
+                        <div class="director-drawer-toggle inline-drawer-toggle inline-drawer-header">
+                            <b>提示词设置</b>
+                            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+                        </div>
+                        <div class="inline-drawer-content director-drawer-content">
+                            <label class="director-field-row">
+                                <span>情节节点生成系统提示词</span>
+                                <textarea id="director_generation_prompt" class="text_pole" rows="10"></textarea>
+                            </label>
+                            <label class="director-field-row">
+                                <span>节点分析系统提示词</span>
+                                <textarea id="director_analysis_prompt" class="text_pole" rows="10"></textarea>
+                            </label>
+                            <label class="director-field-row">
+                                <span>最终注入模板</span>
+                                <textarea id="director_injection_prompt" class="text_pole" rows="8"></textarea>
+                            </label>
                         </div>
                     </div>
                 </div>

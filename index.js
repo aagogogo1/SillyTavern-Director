@@ -32,6 +32,7 @@ const defaultSettings = Object.freeze({
       "节点按推荐推进顺序排列，代表该情节内将依次发生的事件。",
       "节点描述要短、可执行、可触发，且能显著推动故事。",
       "不要生成空节点、重复节点或仅描述情绪而不推动剧情的节点。",
+      "只输出单个 JSON 对象，不要用数组或 groups 字段包裹，顶层字段只有 title、summary、nodes。",
       "输出格式：{\"title\":string,\"summary\":string,\"nodes\":[{\"title\":string,\"content\":string}]}"
     ].join("\n"),
     nodeAnalysisSystem: [
@@ -611,8 +612,10 @@ function renderChatPanel() {
             <div class="director-plot-header">
               <span class="director-plot-title">${escapeHtml(group.title)}</span>
               <span class="director-chip director-chip-error">生成失败</span>
+              <button class="menu_button director-retry-plot" data-group-id="${escapeHtml(group.id)}" type="button">重新生成</button>
               <button class="menu_button director-remove-plot" data-group-id="${escapeHtml(group.id)}" type="button">移除</button>
             </div>
+            <div class="director-plot-error-msg">${escapeHtml(group.generateError)}</div>
           </div>`;
       }
 
@@ -737,6 +740,7 @@ async function handleAddPlot(description) {
     id: groupId,
     title: description.length > 24 ? description.slice(0, 24) + "…" : description,
     summary: description,
+    originalDescription: description,
     generating: true,
     nodes: [],
     createdAt: Date.now(),
@@ -757,13 +761,17 @@ async function handleAddPlot(description) {
     });
 
     const parsed = extractJsonObject(rawResult);
-    const nodes = Array.isArray(parsed.nodes) ? parsed.nodes : [];
+    // 兼容 {title,summary,nodes:[]} 和 {groups:[{title,summary,nodes:[]}]} 两种格式
+    const parsedData = Array.isArray(parsed.groups) && parsed.groups.length > 0
+      ? parsed.groups[0]
+      : parsed;
+    const nodes = Array.isArray(parsedData.nodes) ? parsedData.nodes : [];
     if (nodes.length === 0) throw new Error("模型没有返回任何节点");
 
     const group = getLibraryGroupById(groupId);
     if (group) {
-      group.title = normalizeUserPlaceholder(String(parsed.title || description).trim());
-      group.summary = normalizeUserPlaceholder(String(parsed.summary || description).trim());
+      group.title = normalizeUserPlaceholder(String(parsedData.title || description).trim());
+      group.summary = normalizeUserPlaceholder(String(parsedData.summary || description).trim());
       group.nodes = nodes.map((node, i) => ({
         id: createId("node"),
         title: normalizeUserPlaceholder(String(node.title || `节点 ${i + 1}`).trim()),
@@ -1230,6 +1238,21 @@ function bindStaticEvents() {
       if (card.hasClass("is-generating") || card.hasClass("is-error")) return;
       card.toggleClass("is-open");
       card.find(".director-plot-body").toggle(card.hasClass("is-open"));
+    });
+
+  $(document)
+    .off("click", ".director-retry-plot")
+    .on("click", ".director-retry-plot", async function onRetryPlot(event) {
+      event.stopPropagation();
+      const groupId = $(this).data("group-id");
+      const group = getLibraryGroupById(groupId);
+      if (!group) return;
+      const description = group.originalDescription || group.summary;
+      const state = getChatState();
+      state.nodeGroupLibrary = state.nodeGroupLibrary.filter((g) => g.id !== groupId);
+      removeActivatedGroup(groupId);
+      await saveChatState();
+      await handleAddPlot(description);
     });
 
   $(document)
