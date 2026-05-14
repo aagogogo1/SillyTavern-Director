@@ -135,12 +135,27 @@
                                 <label class="director-field-row">
                                     <textarea id="director_plot_description" class="text_pole" rows="3" placeholder="描述你想推进的情节内容，AI 将据此生成节点序列。涉及主角时写 &lt;user&gt;。"></textarea>
                                 </label>
+                                <label class="director-field-row director-inline-field">
+                                    <span>节点数：</span>
+                                    <input id="director_node_generation_count" class="text_pole" type="number" min="1" max="20" value="4" style="width:60px;" />
+                                </label>
                                 <div class="director-button-row">
                                     <button id="director_confirm_add_plot" class="menu_button" type="button">确认生成</button>
                                 </div>
                             </div>
 
                             <div id="director_plot_list" class="director-plot-list"></div>
+
+                            <div class="director-drawer inline-drawer director-archive-drawer" style="display:none;">
+                                <div class="director-drawer-toggle inline-drawer-toggle inline-drawer-header">
+                                    <b>归档情节</b>
+                                    <span id="director_archive_count" class="director-chip" style="margin-left:6px;">0</span>
+                                    <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+                                </div>
+                                <div class="inline-drawer-content director-drawer-content" style="padding-top:8px;">
+                                    <div id="director_archive_list" class="director-plot-list"></div>
+                                </div>
+                            </div>
 
                             <div class="director-button-row" style="margin-top:4px;">
                                 <button id="director_run_analysis" class="menu_button" type="button">立即分析节点</button>

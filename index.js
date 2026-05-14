@@ -31,6 +31,7 @@ const defaultSettings = Object.freeze({
     modelList: [],
   },
   analysisHistoryDepth: 10,
+  nodeGenerationCount: 4,
   promptTemplates: {
     nodeGenerationSystem: [
       "你是一个故事导演策划器，同时具备剧本作家和小说编辑的创作视角。",
@@ -50,20 +51,34 @@ const defaultSettings = Object.freeze({
       "输出要求：",
       "- 输出合法 JSON，不要输出 Markdown 代码块，不要输出解释文字。",
       "- summary 字段为润色扩充后的完整情节概述，应比用户原始输入更详细、更具文学质感。",
+      "- 节点的数量必须严格遵循用户要求的个数，不要多也不要少。",
       "- 只输出单个 JSON 对象，顶层字段只有 title、summary、nodes。",
       "- 输出格式：{\"title\":string,\"summary\":string,\"nodes\":[{\"title\":string,\"content\":string}]}"
     ].join("\n"),
     nodeAnalysisSystem: [
       "你是故事导演进度追踪器。",
-      "你会收到当前推进中的节点列表和AI的最新一条回复。",
-      "你的任务是判断AI最新回复是否已经使某些节点的目标事件发生或完成。",
+      "你会收到当前尚未处理的节点列表和最近一段聊天记录（包含角色和用户的全部发言）。",
+      "你的任务是根据完整的聊天记录，逐一检查每个节点：",
+      "1. 该节点描述的事件是否已经在聊天中明确发生或完成？→ 标记为 triggered",
+      "2. 该节点是否已过期——即故事场景已推进到它之后，它已不再可能按原顺序发生？→ 标记为 expired",
+      "3. 两者都不满足 → 保持 pending，作为后续推进目标。",
+      "",
+      "关键原则：",
+      "- 用户的每一次发言（动作、对话、选择）和角色的叙述推进，都可能使节点完成或过期。",
+      "- 不要只盯着最新一条回复；综合整段聊天记录上下文判断。",
+      "- 如果一个节点过期，它之前的所有 pending 节点都视为过期。",
+      "- 已经 triggered 的节点绝不能再改回其他状态。",
+      "",
+      "判断标准：",
+      "- triggered：节点事件在聊天中被明确叙述为已发生、正在发生或已完成。",
+      "- expired：聊天显示故事已经推进到该节点之后的位置（例如后续节点的事件已发生，或场景已跳转），该节点已不可能再按原计划发生。",
+      "- pending：节点事件尚未明确发生，且故事仍有合理路径到达该节点。",
+      "- 谨慎判断：宁可漏掉 triggered/expired 也不要误判。",
+      "",
       "如果故事中提到主角、玩家、用户或第一人称主视角角色，统一写成 <user>，不要写真实名字。",
       "",
-      "判断标准：节点目标事件在该回复中被明确叙述为已发生、正在发生或已完成，才算触发。",
-      "仅提到相关话题但未实际发生，不算触发。",
-      "",
       "输出必须是合法 JSON，不要输出 Markdown 代码块，不要输出解释。",
-      "输出格式：{\"triggered\":[{\"groupId\":string,\"nodeId\":string}]}"
+      "输出格式：{\"triggered\":[{\"groupId\":string,\"nodeId\":string}],\"expired\":[{\"groupId\":string,\"nodeId\":string}]}"
     ].join("\n"),
     injectionTemplate: [
       "你现在收到来自故事导演模块的持续性剧情引导指令。",
@@ -83,6 +98,7 @@ const defaultSettings = Object.freeze({
 const defaultChatState = Object.freeze({
   nodeGroupLibrary: [],
   activeGroupIds: [],
+  archivedGroupIds: [],
   activationStateByGroup: {},
   lastMatchedNodeIds: [],
   lastInjectionPreview: "",
@@ -134,6 +150,7 @@ function getSettings() {
   settings.analysisApi = { ...defaults.analysisApi, ...(settings.analysisApi || {}) };
   settings.analysisApi.modelList = Array.isArray(settings.analysisApi.modelList) ? settings.analysisApi.modelList : [];
   settings.analysisHistoryDepth = clampNumber(settings.analysisHistoryDepth, 1, 50, defaults.analysisHistoryDepth);
+  settings.nodeGenerationCount = clampNumber(settings.nodeGenerationCount, 1, 50, defaults.nodeGenerationCount);
   settings.promptTemplates = { ...defaults.promptTemplates, ...(settings.promptTemplates || {}) };
 
   return settings;
@@ -150,6 +167,7 @@ function getChatState() {
   const state = chatMetadata[chatMetadataKey];
   state.nodeGroupLibrary = Array.isArray(state.nodeGroupLibrary) ? state.nodeGroupLibrary : [];
   state.activeGroupIds = Array.isArray(state.activeGroupIds) ? state.activeGroupIds : [];
+  state.archivedGroupIds = Array.isArray(state.archivedGroupIds) ? state.archivedGroupIds : [];
   state.activationStateByGroup = state.activationStateByGroup || {};
   state.lastMatchedNodeIds = Array.isArray(state.lastMatchedNodeIds) ? state.lastMatchedNodeIds : [];
   state.lastInjectionPreview = state.lastInjectionPreview || "";
@@ -385,6 +403,32 @@ function normalizeUserPlaceholder(value) {
     .replace(/\b(?:用户|玩家|主角本人|主人公本人)\b/g, "<user>");
 }
 
+function normalizeNodeState(nodeState = {}) {
+  return {
+    triggered: Boolean(nodeState.triggered),
+    expired: Boolean(nodeState.expired || nodeState.skipped),
+    note: String(nodeState.note || ""),
+  };
+}
+
+function isNodeResolved(nodeState = {}) {
+  return Boolean(nodeState.triggered || nodeState.expired);
+}
+
+function getFirstPendingNode(nodes = []) {
+  return nodes.find((node) => !isNodeResolved(node)) || null;
+}
+
+function hashString(value) {
+  const text = String(value || "");
+  let hash = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    hash = ((hash << 5) - hash) + text.charCodeAt(i);
+    hash |= 0;
+  }
+  return String(hash >>> 0);
+}
+
 function getLibraryGroupById(groupId) {
   return getChatState().nodeGroupLibrary.find((group) => group.id === groupId) || null;
 }
@@ -394,6 +438,7 @@ function syncChatStateWithLibrary() {
   const validGroupIds = new Set(state.nodeGroupLibrary.map((group) => group.id));
 
   state.activeGroupIds = state.activeGroupIds.filter((groupId) => validGroupIds.has(groupId));
+  state.archivedGroupIds = state.archivedGroupIds.filter((groupId) => validGroupIds.has(groupId));
 
   for (const groupId of Object.keys(state.activationStateByGroup)) {
     if (!validGroupIds.has(groupId)) {
@@ -414,7 +459,9 @@ function syncChatStateWithLibrary() {
 
     for (const node of group.nodes) {
       if (!activationState.nodeStateById[node.id]) {
-        activationState.nodeStateById[node.id] = { triggered: false, note: "" };
+        activationState.nodeStateById[node.id] = normalizeNodeState();
+      } else {
+        activationState.nodeStateById[node.id] = normalizeNodeState(activationState.nodeStateById[node.id]);
       }
     }
 
@@ -441,7 +488,41 @@ function ensureGroupActivated(groupId) {
 
   for (const node of group.nodes) {
     if (!state.activationStateByGroup[groupId].nodeStateById[node.id]) {
-      state.activationStateByGroup[groupId].nodeStateById[node.id] = { triggered: false, note: "" };
+      state.activationStateByGroup[groupId].nodeStateById[node.id] = normalizeNodeState();
+    } else {
+      state.activationStateByGroup[groupId].nodeStateById[node.id] = normalizeNodeState(state.activationStateByGroup[groupId].nodeStateById[node.id]);
+    }
+  }
+}
+
+function archiveResolvedGroups() {
+  const state = getChatState();
+  const toArchive = [];
+
+  for (const groupId of state.activeGroupIds) {
+    const group = getLibraryGroupById(groupId);
+    if (!group) continue;
+    const activationState = state.activationStateByGroup[groupId] || { nodeStateById: {} };
+    const allResolved = group.nodes.every((node) => isNodeResolved(normalizeNodeState(activationState.nodeStateById[node.id])));
+    if (allResolved) {
+      toArchive.push(groupId);
+    }
+  }
+
+  for (const groupId of toArchive) {
+    state.activeGroupIds = state.activeGroupIds.filter((id) => id !== groupId);
+    if (!state.archivedGroupIds.includes(groupId)) {
+      state.archivedGroupIds.push(groupId);
+    }
+  }
+
+  // 归档上限：仅保留最新的 3 个，删除多余的老数据
+  if (state.archivedGroupIds.length > 3) {
+    const toRemove = state.archivedGroupIds.slice(0, state.archivedGroupIds.length - 3);
+    state.archivedGroupIds = state.archivedGroupIds.slice(-3);
+    for (const groupId of toRemove) {
+      state.nodeGroupLibrary = state.nodeGroupLibrary.filter((g) => g.id !== groupId);
+      delete state.activationStateByGroup[groupId];
     }
   }
 }
@@ -463,10 +544,11 @@ function getActiveGroups() {
 
       const activationState = state.activationStateByGroup[groupId] || { nodeStateById: {} };
       const nodes = group.nodes.map((node) => {
-        const nodeState = activationState.nodeStateById[node.id] || { triggered: false, note: "" };
+        const nodeState = normalizeNodeState(activationState.nodeStateById[node.id]);
         return {
           ...node,
-          triggered: Boolean(nodeState.triggered),
+          triggered: nodeState.triggered,
+          expired: nodeState.expired,
           note: String(nodeState.note || ""),
         };
       });
@@ -488,6 +570,19 @@ function buildTriggeredSummary(groups) {
     }
 
     lines.push(`${group.title}: ${triggeredNodes.map((node) => node.title || node.content).join("；")}`);
+  }
+  return lines.join("\n");
+}
+
+function buildExpiredSummary(groups) {
+  const lines = [];
+  for (const group of groups) {
+    const expiredNodes = group.nodes.filter((node) => node.expired);
+    if (expiredNodes.length === 0) {
+      continue;
+    }
+
+    lines.push(`${group.title}: ${expiredNodes.map((node) => node.title || node.content).join("；")}`);
   }
   return lines.join("\n");
 }
@@ -598,17 +693,20 @@ function renderModelSelectFor(apiType) {
 function renderChatPanel() {
   const context = getContext();
   const state = syncChatStateWithLibrary();
+  archiveResolvedGroups();
   const { antiSpoiler } = getSettings();
   const chatName = context?.name2 || context?.groupId || "当前会话";
 
   $("#director_chat_scope").text(`当前聊天：${chatName}`);
 
-  const allPlots = state.nodeGroupLibrary;
+  // ── 活跃情节列表 ──
+  const activeGroupIds = new Set(state.activeGroupIds);
+  const activePlots = state.nodeGroupLibrary.filter((g) => activeGroupIds.has(g.id));
 
-  if (allPlots.length === 0) {
+  if (activePlots.length === 0) {
     $("#director_plot_list").html('<div class="director-empty">还没有情节，点击“新增情节”开始创建。</div>');
   } else {
-    const html = allPlots.map((group) => {
+    const html = activePlots.map((group) => {
       if (group.generating) {
         return `
           <div class="director-plot-card is-generating" data-group-id="${escapeHtml(group.id)}">
@@ -633,14 +731,18 @@ function renderChatPanel() {
       }
 
       const activationState = state.activationStateByGroup[group.id] || { nodeStateById: {} };
-      const triggeredCount = group.nodes.filter((node) => activationState.nodeStateById[node.id]?.triggered).length;
+      const resolvedCount = group.nodes.filter((node) => isNodeResolved(normalizeNodeState(activationState.nodeStateById[node.id]))).length;
+      const currentNodeId = getFirstPendingNode(group.nodes.map((node) => ({
+        ...node,
+        ...normalizeNodeState(activationState.nodeStateById[node.id]),
+      })))?.id || "";
 
       if (antiSpoiler) {
         return `
           <div class="director-plot-card is-spoiler-protected" data-group-id="${escapeHtml(group.id)}">
             <div class="director-plot-header">
               <strong class="director-plot-title">${escapeHtml(group.title)}</strong>
-              <span class="director-chip">${triggeredCount}/${group.nodes.length} 已触发</span>
+              <span class="director-chip">${resolvedCount}/${group.nodes.length} 已处理</span>
               <button class="menu_button director-remove-plot" data-group-id="${escapeHtml(group.id)}" type="button">移除</button>
             </div>
           </div>`;
@@ -651,19 +753,28 @@ function renderChatPanel() {
           <div class="director-plot-header">
             <span class="director-plot-chevron">▶</span>
             <strong class="director-plot-title">${escapeHtml(group.title)}</strong>
-            <span class="director-chip">${triggeredCount}/${group.nodes.length} 已触发</span>
+            <span class="director-chip">${resolvedCount}/${group.nodes.length} 已处理</span>
             <button class="menu_button director-remove-plot" data-group-id="${escapeHtml(group.id)}" type="button">移除</button>
           </div>
           <div class="director-plot-body">
             <div class="director-active-summary">${escapeHtml(group.summary || "")}</div>
             <div class="director-node-state-list">
               ${group.nodes.map((node) => {
-                const nodeState = activationState.nodeStateById[node.id] || { triggered: false };
+                const nodeState = normalizeNodeState(activationState.nodeStateById[node.id]);
+                const statusKey = nodeState.triggered
+                  ? "completed"
+                  : (nodeState.expired ? "expired" : (node.id === currentNodeId ? "current" : "pending"));
+                const statusLabel = statusKey === "completed"
+                  ? "已完成"
+                  : (statusKey === "expired" ? "已过期" : (statusKey === "current" ? "进行中" : "未开始"));
                 return `
-                  <label class="director-node-state-item">
+                  <label class="director-node-state-item is-${statusKey}">
                     <input class="director-node-trigger" type="checkbox" data-group-id="${escapeHtml(group.id)}" data-node-id="${escapeHtml(node.id)}" ${nodeState.triggered ? "checked" : ""} />
-                    <span>
-                      <strong>${escapeHtml(node.title || "未命名节点")}</strong>
+                    <span class="director-node-state-content">
+                      <span class="director-node-state-heading">
+                        <strong>${escapeHtml(node.title || "未命名节点")}</strong>
+                        <span class="director-chip director-node-status-chip director-node-status-chip-${statusKey}">${statusLabel}</span>
+                      </span>
                       <span>${escapeHtml(node.content)}</span>
                     </span>
                   </label>`;
@@ -686,6 +797,53 @@ function renderChatPanel() {
     $("#director_injection_preview").val(state.lastInjectionPreview || "");
     $("#director_injection_preview").prop("disabled", false);
   }
+
+  // ── 归档面板 ──
+  const archivedIds = new Set(state.archivedGroupIds);
+  const archivedPlots = state.nodeGroupLibrary.filter((g) => archivedIds.has(g.id));
+
+  const $archiveDrawer = $(".director-archive-drawer");
+  const $archiveList = $("#director_archive_list");
+  const $archiveCount = $("#director_archive_count");
+
+  if (archivedPlots.length === 0) {
+    $archiveDrawer.hide();
+  } else {
+    $archiveDrawer.show();
+    $archiveCount.text(String(archivedPlots.length));
+    const archiveHtml = archivedPlots.map((group) => {
+      const activationState = state.activationStateByGroup[group.id] || { nodeStateById: {} };
+      const resolvedCount = group.nodes.filter((node) => isNodeResolved(normalizeNodeState(activationState.nodeStateById[node.id]))).length;
+      return `
+        <div class="director-plot-card is-archived" data-group-id="${escapeHtml(group.id)}">
+          <div class="director-plot-header">
+            <strong class="director-plot-title">${escapeHtml(group.title)}</strong>
+            <span class="director-chip">${resolvedCount}/${group.nodes.length} 已处理</span>
+          </div>
+          <div class="director-plot-body" style="display:none;">
+            <div class="director-active-summary">${escapeHtml(group.summary || "")}</div>
+            <div class="director-node-state-list">
+              ${group.nodes.map((node) => {
+                const nodeState = normalizeNodeState(activationState.nodeStateById[node.id]);
+                const statusKey = nodeState.triggered ? "completed" : "expired";
+                const statusLabel = statusKey === "completed" ? "已完成" : "已过期";
+                return `
+                  <div class="director-node-state-item is-${statusKey}" style="cursor:default;">
+                    <span class="director-node-state-content">
+                      <span class="director-node-state-heading">
+                        <strong>${escapeHtml(node.title || "未命名节点")}</strong>
+                        <span class="director-chip director-node-status-chip director-node-status-chip-${statusKey}">${statusLabel}</span>
+                      </span>
+                      <span>${escapeHtml(node.content)}</span>
+                    </span>
+                  </div>`;
+              }).join("")}
+            </div>
+          </div>
+        </div>`;
+    }).join("");
+    $archiveList.html(archiveHtml);
+  }
 }
 
 function renderSettings() {
@@ -700,6 +858,7 @@ function renderSettings() {
   $("#director_analysis_api_url").val(settings.analysisApi.url || "");
   $("#director_analysis_api_key").val(settings.analysisApi.apiKey || "");
   $("#director_analysis_history_depth").val(settings.analysisHistoryDepth);
+  $("#director_node_generation_count").val(settings.nodeGenerationCount);
   $("#director_generation_prompt").val(settings.promptTemplates.nodeGenerationSystem);
   $("#director_analysis_prompt").val(settings.promptTemplates.nodeAnalysisSystem);
   $("#director_injection_prompt").val(settings.promptTemplates.injectionTemplate);
@@ -729,6 +888,7 @@ function syncSettingsFromInputs() {
   settings.analysisApi.apiKey = String($("#director_analysis_api_key").val() || "").trim();
   settings.analysisApi.model = String($("#director_analysis_model_name").val() || "").trim();
   settings.analysisHistoryDepth = clampNumber($("#director_analysis_history_depth").val(), 1, 50, 10);
+  settings.nodeGenerationCount = clampNumber($("#director_node_generation_count").val(), 1, 50, 4);
   settings.promptTemplates.nodeGenerationSystem = String($("#director_generation_prompt").val() || "").trim();
   settings.promptTemplates.nodeAnalysisSystem = String($("#director_analysis_prompt").val() || "").trim();
   settings.promptTemplates.injectionTemplate = String($("#director_injection_prompt").val() || "").trim();
@@ -781,7 +941,7 @@ async function handleAddPlot(description) {
       apiType: "generation",
       messages: [
         { role: "system", content: settings.promptTemplates.nodeGenerationSystem },
-        { role: "user", content: `用户情节构想：${normalizeUserPlaceholder(description)}\n\n请充分理解上述情节构想，发挥创作想象，润色语言并丰富情节细节（补充氛围、角色动机、转折铺垫等），然后生成有序的节点序列。严格输出 JSON，不要输出任何解释。` },
+        { role: "user", content: `用户情节构想：${normalizeUserPlaceholder(description)}\n\n请充分理解上述情节构想，发挥创作想象，润色语言并丰富情节细节（补充氛围、角色动机、转折铺垫等），然后生成有序的节点序列。请严格生成 ${settings.nodeGenerationCount} 个节点，不要多也不要少。严格输出 JSON，不要输出任何解释。` },
       ],
     });
 
@@ -826,12 +986,12 @@ async function handleAddPlot(description) {
 // 纯本地函数：根据当前节点状态构建注入文本，不调用 API
 function buildInjectionContent() {
   const settings = getSettings();
-  const activeGroups = getActiveGroups().filter((group) => group.nodes.some((node) => !node.triggered));
+  const activeGroups = getActiveGroups().filter((group) => group.nodes.some((node) => !isNodeResolved(node)));
   if (activeGroups.length === 0) return "";
 
   const currentNodes = activeGroups
     .map((group) => {
-      const first = group.nodes.find((node) => !node.triggered);
+      const first = getFirstPendingNode(group.nodes);
       return first
         ? { groupTitle: group.title, nodeTitle: first.title, nodeContent: first.content }
         : null;
@@ -841,6 +1001,7 @@ function buildInjectionContent() {
   if (currentNodes.length === 0) return "";
 
   const triggeredSummary = buildTriggeredSummary(activeGroups);
+  const expiredSummary = buildExpiredSummary(activeGroups);
   return [
     settings.promptTemplates.injectionTemplate,
     "",
@@ -850,6 +1011,7 @@ function buildInjectionContent() {
     ),
     "",
     triggeredSummary ? `已完成节点摘要：\n${triggeredSummary}` : "",
+    expiredSummary ? `已过期节点摘要：\n${expiredSummary}` : "",
   ].filter(Boolean).join("\n");
 }
 
@@ -857,7 +1019,7 @@ function buildInjectionContent() {
 async function analyzeNodeCompletion() {
   const settings = getSettings();
   const context = getContext();
-  const activeGroups = getActiveGroups().filter((group) => group.nodes.some((node) => !node.triggered));
+  const activeGroups = getActiveGroups().filter((group) => group.nodes.some((node) => !isNodeResolved(node)));
   if (activeGroups.length === 0) return;
 
   const chat = Array.isArray(context.chat) ? context.chat : [];
@@ -866,24 +1028,33 @@ async function analyzeNodeCompletion() {
   if (recentMessages.length === 0) return;
   const chatContext = serializeConversation(recentMessages);
 
-  const currentNodes = activeGroups
-    .map((group) => {
-      const first = group.nodes.find((node) => !node.triggered);
-      return first
-        ? { groupId: group.id, nodeId: first.id, groupTitle: group.title, nodeTitle: first.title, nodeContent: first.content }
-        : null;
-    })
-    .filter(Boolean);
+  const currentNodes = activeGroups.flatMap((group) => group.nodes
+    .map((node, index) => (!isNodeResolved(node)
+      ? {
+        groupId: group.id,
+        nodeId: node.id,
+        groupTitle: group.title,
+        nodeTitle: node.title,
+        nodeContent: node.content,
+        nodeOrder: index + 1,
+      }
+      : null))
+    .filter(Boolean));
 
   if (currentNodes.length === 0) return;
 
   const state = getChatState();
-  const signature = `${currentNodes.map((n) => n.nodeId).join(",")}|${chatContext.slice(0, 200)}`;
+  const signature = `${currentNodes.map((n) => `${n.groupId}:${n.nodeId}`).join(",")}|${hashString(chatContext)}`;
   if (state.lastAnalysisSignature === signature) return;
 
   const nodeList = currentNodes
-    .map((n) => `- groupId: "${n.groupId}", nodeId: "${n.nodeId}", 节点: "${n.nodeTitle}", 目标事件: "${n.nodeContent}"`)
+    .map((n) => `- groupId: "${n.groupId}", nodeId: "${n.nodeId}", 顺序: ${n.nodeOrder}, 所属情节: "${n.groupTitle}", 节点: "${n.nodeTitle}", 目标事件: "${n.nodeContent}"`)
     .join("\n");
+
+  const groupNodeOrderMap = Object.fromEntries(activeGroups.map((group) => [
+    group.id,
+    Object.fromEntries(group.nodes.map((node, index) => [node.id, index])),
+  ]));
 
   try {
     const rawResult = await callDirectorApi({
@@ -894,13 +1065,20 @@ async function analyzeNodeCompletion() {
         {
           role: "user",
           content: [
-            "当前推进中的节点：",
+            "以下为当前尚未处理的节点（按原定剧情顺序排列）：",
             nodeList,
             "",
             `最近 ${recentMessages.length} 条聊天记录：`,
             chatContext,
             "",
-            "请判断哪些节点目标已在上述聊天记录中发生/完成，只返回 JSON。",
+            "请综合上述聊天记录，一步步推理：",
+            "1. 当前故事场景已经到了哪里？",
+            "2. 哪些节点的目标事件已经在聊天中明确发生或完成？→ 放进 triggered",
+            "3. 是否存在已过期的节点——故事已推进到它之后，它已不可能再按原顺序发生？→ 放进 expired",
+            "4. 如果一个节点触发，那么它之前所有既未触发也未过期的节点都应视为过期。",
+            "",
+            "只返回 JSON，不要输出任何解释：",
+            "{\"triggered\":[{\"groupId\":string,\"nodeId\":string}],\"expired\":[{\"groupId\":string,\"nodeId\":string}]}",
           ].join("\n"),
         },
       ],
@@ -908,19 +1086,58 @@ async function analyzeNodeCompletion() {
 
     const parsed = extractJsonObject(rawResult);
     const triggered = Array.isArray(parsed.triggered) ? parsed.triggered : [];
-    let anyTriggered = false;
+    const expired = Array.isArray(parsed.expired) ? parsed.expired : [];
+    let anyResolved = false;
     const stateObj = getChatState();
+    const highestTriggeredIndexByGroup = {};
 
     for (const item of triggered) {
       const groupState = stateObj.activationStateByGroup[item.groupId];
       if (groupState?.nodeStateById?.[item.nodeId]) {
-        groupState.nodeStateById[item.nodeId].triggered = true;
-        anyTriggered = true;
+        const nodeState = normalizeNodeState(groupState.nodeStateById[item.nodeId]);
+        nodeState.triggered = true;
+        nodeState.expired = false;
+        groupState.nodeStateById[item.nodeId] = nodeState;
+        anyResolved = true;
+        const nodeIndex = groupNodeOrderMap[item.groupId]?.[item.nodeId];
+        if (Number.isInteger(nodeIndex)) {
+          highestTriggeredIndexByGroup[item.groupId] = Math.max(highestTriggeredIndexByGroup[item.groupId] ?? -1, nodeIndex);
+        }
+      }
+    }
+
+    for (const item of expired) {
+      const groupState = stateObj.activationStateByGroup[item.groupId];
+      if (groupState?.nodeStateById?.[item.nodeId]) {
+        const nodeState = normalizeNodeState(groupState.nodeStateById[item.nodeId]);
+        if (!nodeState.triggered) {
+          nodeState.expired = true;
+          groupState.nodeStateById[item.nodeId] = nodeState;
+          anyResolved = true;
+        }
+      }
+    }
+
+    for (const [groupId, highestTriggeredIndex] of Object.entries(highestTriggeredIndexByGroup)) {
+      const group = activeGroups.find((item) => item.id === groupId);
+      const groupState = stateObj.activationStateByGroup[groupId];
+      if (!group || !groupState) {
+        continue;
+      }
+
+      for (let index = 0; index < highestTriggeredIndex; index += 1) {
+        const node = group.nodes[index];
+        const nodeState = normalizeNodeState(groupState.nodeStateById[node.id]);
+        if (!isNodeResolved(nodeState)) {
+          nodeState.expired = true;
+          groupState.nodeStateById[node.id] = nodeState;
+          anyResolved = true;
+        }
       }
     }
 
     stateObj.lastAnalysisSignature = signature;
-    if (anyTriggered) await checkAndAutoGeneratePlot();
+    if (anyResolved) await checkAndAutoGeneratePlot();
     await saveChatState();
   } catch (error) {
     console.warn("Director node completion analysis failed:", error.message);
@@ -931,7 +1148,7 @@ async function analyzeNodeCompletion() {
 
 async function buildInjectionPreview(forceRefresh = false) {
   const state = getChatState();
-  const activeGroups = getActiveGroups().filter((group) => group.nodes.some((node) => !node.triggered));
+  const activeGroups = getActiveGroups().filter((group) => group.nodes.some((node) => !isNodeResolved(node)));
 
   if (activeGroups.length === 0) {
     if (state.lastInjectionPreview || state.lastMatchedNodeIds.length) {
@@ -944,7 +1161,7 @@ async function buildInjectionPreview(forceRefresh = false) {
   }
 
   const signature = activeGroups
-    .map((group) => { const f = group.nodes.find((n) => !n.triggered); return f ? `${group.id}:${f.id}` : null; })
+    .map((group) => { const f = getFirstPendingNode(group.nodes); return f ? `${group.id}:${f.id}` : null; })
     .filter(Boolean)
     .join("|");
 
@@ -954,7 +1171,7 @@ async function buildInjectionPreview(forceRefresh = false) {
 
   const preview = normalizeUserPlaceholder(buildInjectionContent());
   state.lastMatchedNodeIds = activeGroups
-    .map((group) => { const f = group.nodes.find((n) => !n.triggered); return f ? `${group.title} / ${f.title}` : null; })
+    .map((group) => { const f = getFirstPendingNode(group.nodes); return f ? `${group.title} / ${f.title}` : null; })
     .filter(Boolean);
   state.lastInjectionPreview = preview;
   state.lastAnalysisSignature = signature;
@@ -1005,8 +1222,9 @@ async function handleTriggerToggle(groupId, nodeId, checked) {
   ensureGroupActivated(groupId);
   const state = getChatState();
   const groupState = state.activationStateByGroup[groupId] || { nodeStateById: {} };
-  const nodeState = groupState.nodeStateById[nodeId] || { triggered: false, note: "" };
+  const nodeState = normalizeNodeState(groupState.nodeStateById[nodeId]);
   nodeState.triggered = checked;
+  nodeState.expired = false;
   groupState.nodeStateById[nodeId] = nodeState;
   state.activationStateByGroup[groupId] = groupState;
   state.lastAnalysisSignature = "";
@@ -1381,8 +1599,8 @@ async function checkAndAutoGeneratePlot() {
     if (group.generating || group.generateError || group.autoNextTriggered) continue;
     if (!group.nodes || group.nodes.length < 2) continue;
     const activationState = state.activationStateByGroup[group.id] || { nodeStateById: {} };
-    const triggeredCount = group.nodes.filter((node) => activationState.nodeStateById[node.id]?.triggered).length;
-    if (group.nodes.length - triggeredCount === 1) {
+    const resolvedCount = group.nodes.filter((node) => isNodeResolved(normalizeNodeState(activationState.nodeStateById[node.id]))).length;
+    if (group.nodes.length - resolvedCount === 1) {
       group.autoNextTriggered = true;
       await saveChatState();
       toastr.info(`检测到“${group.title}”即将结束，正在自动生成下一情节…`, "St导演");
@@ -1398,7 +1616,7 @@ async function handleAutoGeneratePlot(group) {
   const recentMessages = chat.slice(-8);
   const chatContext = recentMessages.length > 0 ? serializeConversation(recentMessages) : "（暂无聊天记录）";
   const description = [
-    `【自动续写】当前情节“${group.title}”已接近尾声（仅剩最后一个节点未触发）。`,
+    `【自动续写】当前情节“${group.title}”已接近尾声（仅剩最后一个节点未处理）。`,
     "请根据以下最近对话内容，规划下一段自然衬接的故事情节，使叙事流畅延续。",
     "",
     `最近对话：\n${chatContext}`,
@@ -1433,6 +1651,16 @@ function bindContextEvents() {
   context.eventSource.on(context.event_types.CHARACTER_MESSAGE_RENDERED, () => {
     handleAfterCharacterMessage();
   });
+
+  // 用户发送消息后也触发分析，使节点状态更快跟上叙事
+  const userEvent = context.event_types.USER_MESSAGE_RENDERED
+    || context.event_types.MESSAGE_SENT
+    || context.event_types.MESSAGE_RECEIVED;
+  if (userEvent) {
+    context.eventSource.on(userEvent, () => {
+      handleAfterCharacterMessage();
+    });
+  }
 }
 
 globalThis.stDirectorGenerateInterceptor = async function stDirectorGenerateInterceptor() {
