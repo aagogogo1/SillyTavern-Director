@@ -94,6 +94,11 @@ const defaultSettings = Object.freeze({
       "涉及主角时，<user> 代表主角本人。"
     ].join("\n"),
   },
+  promptTemplatesExtra: {
+    nodeGenerationSystem: "",
+    nodeAnalysisSystem: "",
+    injectionTemplate: "",
+  },
 });
 
 const defaultChatState = Object.freeze({
@@ -105,6 +110,7 @@ const defaultChatState = Object.freeze({
   lastInjectionPreview: "",
   lastAnalysisAt: 0,
   lastAnalysisSignature: "",
+  pendingPlotDescription: "",
 });
 
 const floatingLauncherState = {
@@ -154,6 +160,7 @@ function getSettings() {
   settings.nodeGenerationCount = clampNumber(settings.nodeGenerationCount, 1, 50, defaults.nodeGenerationCount);
   settings.generationHistoryDepth = clampNumber(settings.generationHistoryDepth, 1, 100, defaults.generationHistoryDepth);
   settings.promptTemplates = { ...defaults.promptTemplates, ...(settings.promptTemplates || {}) };
+  settings.promptTemplatesExtra = { ...defaults.promptTemplatesExtra, ...(settings.promptTemplatesExtra || {}) };
 
   return settings;
 }
@@ -175,6 +182,7 @@ function getChatState() {
   state.lastInjectionPreview = state.lastInjectionPreview || "";
   state.lastAnalysisAt = Number(state.lastAnalysisAt || 0);
   state.lastAnalysisSignature = state.lastAnalysisSignature || "";
+  state.pendingPlotDescription = state.pendingPlotDescription || "";
 
   return state;
 }
@@ -715,6 +723,7 @@ function renderChatPanel() {
             <div class="director-plot-header">
               <span class="director-plot-title">${escapeHtml(group.title)}</span>
               <span class="director-chip">生成中…</span>
+              <button class="menu_button director-cancel-plot" data-group-id="${escapeHtml(group.id)}" type="button" style="color:rgba(220,74,74,0.9);">取消</button>
             </div>
           </div>`;
       }
@@ -800,6 +809,12 @@ function renderChatPanel() {
     $("#director_injection_preview").prop("disabled", false);
   }
 
+  // 恢复未提交的情节描述
+  const $desc = $("#director_plot_description");
+  if ($desc.val() !== state.pendingPlotDescription) {
+    $desc.val(state.pendingPlotDescription || "");
+  }
+
   // ── 归档面板 ──
   const archivedIds = new Set(state.archivedGroupIds);
   const archivedPlots = state.nodeGroupLibrary.filter((g) => archivedIds.has(g.id));
@@ -821,6 +836,8 @@ function renderChatPanel() {
           <div class="director-plot-header">
             <strong class="director-plot-title">${escapeHtml(group.title)}</strong>
             <span class="director-chip">${resolvedCount}/${group.nodes.length} 已处理</span>
+            <button class="menu_button director-restore-plot" data-group-id="${escapeHtml(group.id)}" type="button" style="color:rgba(78,182,109,0.9);">恢复</button>
+            <button class="menu_button director-delete-archived-plot" data-group-id="${escapeHtml(group.id)}" type="button" style="color:rgba(220,74,74,0.9);">删除</button>
           </div>
           <div class="director-plot-body" style="display:none;">
             <div class="director-active-summary">${escapeHtml(group.summary || "")}</div>
@@ -865,6 +882,9 @@ function renderSettings() {
   $("#director_generation_prompt").val(settings.promptTemplates.nodeGenerationSystem);
   $("#director_analysis_prompt").val(settings.promptTemplates.nodeAnalysisSystem);
   $("#director_injection_prompt").val(settings.promptTemplates.injectionTemplate);
+  $("#director_generation_prompt_extra").val(settings.promptTemplatesExtra.nodeGenerationSystem);
+  $("#director_analysis_prompt_extra").val(settings.promptTemplatesExtra.nodeAnalysisSystem);
+  $("#director_injection_prompt_extra").val(settings.promptTemplatesExtra.injectionTemplate);
   renderModelSelectFor("generation");
   renderModelSelectFor("analysis");
   renderChatPanel();
@@ -896,6 +916,9 @@ function syncSettingsFromInputs() {
   settings.promptTemplates.nodeGenerationSystem = String($("#director_generation_prompt").val() || "").trim();
   settings.promptTemplates.nodeAnalysisSystem = String($("#director_analysis_prompt").val() || "").trim();
   settings.promptTemplates.injectionTemplate = String($("#director_injection_prompt").val() || "").trim();
+  settings.promptTemplatesExtra.nodeGenerationSystem = String($("#director_generation_prompt_extra").val() || "").trim();
+  settings.promptTemplatesExtra.nodeAnalysisSystem = String($("#director_analysis_prompt_extra").val() || "").trim();
+  settings.promptTemplatesExtra.injectionTemplate = String($("#director_injection_prompt_extra").val() || "").trim();
 }
 
 function saveAllSettings() {
@@ -954,7 +977,7 @@ async function handleAddPlot(description) {
       temperature: 0.6,
       apiType: "generation",
       messages: [
-        { role: "system", content: settings.promptTemplates.nodeGenerationSystem },
+        { role: "system", content: [settings.promptTemplates.nodeGenerationSystem, settings.promptTemplatesExtra.nodeGenerationSystem].filter(Boolean).join("\n\n") },
         { role: "user", content: userContent },
       ],
     });
@@ -1017,7 +1040,7 @@ function buildInjectionContent() {
   const triggeredSummary = buildTriggeredSummary(activeGroups);
   const expiredSummary = buildExpiredSummary(activeGroups);
   return [
-    settings.promptTemplates.injectionTemplate,
+    [settings.promptTemplates.injectionTemplate, settings.promptTemplatesExtra.injectionTemplate].filter(Boolean).join("\n\n"),
     "",
     "当前推进中的节点：",
     ...currentNodes.map((node, i) =>
@@ -1075,7 +1098,7 @@ async function analyzeNodeCompletion() {
       temperature: 0.1,
       apiType: "analysis",
       messages: [
-        { role: "system", content: settings.promptTemplates.nodeAnalysisSystem },
+        { role: "system", content: [settings.promptTemplates.nodeAnalysisSystem, settings.promptTemplatesExtra.nodeAnalysisSystem].filter(Boolean).join("\n\n") },
         {
           role: "user",
           content: [
@@ -1308,9 +1331,30 @@ async function deleteNodeFromGroup(groupId, nodeId) {
 
 async function deleteGroup(groupId) {
   const state = getChatState();
-  state.nodeGroupLibrary = state.nodeGroupLibrary.filter((group) => group.id !== groupId);
+  state.nodeGroupLibrary = state.nodeGroupLibrary.filter((g) => g.id !== groupId);
   removeActivatedGroup(groupId);
+  state.archivedGroupIds = state.archivedGroupIds.filter((id) => id !== groupId);
   invalidateCurrentChatAnalysisCache();
+  await saveChatState();
+  renderChatPanel();
+}
+
+async function cancelGeneratingPlot(groupId) {
+  const state = getChatState();
+  state.nodeGroupLibrary = state.nodeGroupLibrary.filter((g) => g.id !== groupId);
+  removeActivatedGroup(groupId);
+  state.archivedGroupIds = state.archivedGroupIds.filter((id) => id !== groupId);
+  invalidateCurrentChatAnalysisCache();
+  await saveChatState();
+  renderChatPanel();
+}
+
+async function unarchiveGroup(groupId) {
+  const state = getChatState();
+  state.archivedGroupIds = state.archivedGroupIds.filter((id) => id !== groupId);
+  if (!state.activeGroupIds.includes(groupId)) {
+    state.activeGroupIds.push(groupId);
+  }
   await saveChatState();
   renderChatPanel();
 }
@@ -1415,7 +1459,7 @@ function bindStaticEvents() {
       getFloatingButtonElement().removeClass("is-dragging");
     });
 
-  $("#director_enabled, #director_generation_connection_name, #director_generation_api_url, #director_generation_api_key, #director_analysis_connection_name, #director_analysis_api_url, #director_analysis_api_key, #director_generation_prompt, #director_analysis_prompt, #director_injection_prompt")
+  $("#director_enabled, #director_generation_connection_name, #director_generation_api_url, #director_generation_api_key, #director_analysis_connection_name, #director_analysis_api_url, #director_analysis_api_key, #director_generation_prompt, #director_analysis_prompt, #director_injection_prompt, #director_generation_prompt_extra, #director_analysis_prompt_extra, #director_injection_prompt_extra")
     .off("input")
     .on("input", () => {
       saveAllSettings();
@@ -1432,6 +1476,14 @@ function bindStaticEvents() {
   $("#director_analysis_history_depth")
     .off("input")
     .on("input", () => { saveAllSettings(); });
+
+  $("#director_plot_description")
+    .off("input")
+    .on("input", function onDescriptionInput() {
+      const state = getChatState();
+      state.pendingPlotDescription = String($(this).val() || "");
+      saveChatState();
+    });
 
   $("#director_generation_model_name")
     .off("input")
@@ -1504,7 +1556,7 @@ function bindStaticEvents() {
     .on("click", () => {
       const form = $("#director_add_plot_form");
       form.toggle();
-      if (form.is(":visible")) $("#director_plot_description").val("").focus();
+      if (form.is(":visible")) $("#director_plot_description").focus();
     });
 
   $("#director_confirm_add_plot")
@@ -1514,13 +1566,16 @@ function bindStaticEvents() {
       if (!description) { toastr.warning("请先输入情节描述", "St导演"); return; }
       $("#director_add_plot_form").hide();
       $("#director_plot_description").val("");
+      const state = getChatState();
+      state.pendingPlotDescription = "";
+      await saveChatState();
       await handleAddPlot(description);
     });
 
   $(document)
     .off("click", ".director-plot-header")
     .on("click", ".director-plot-header", function onPlotHeaderClick(event) {
-      if ($(event.target).closest(".director-remove-plot").length) return;
+      if ($(event.target).closest(".director-remove-plot, .director-restore-plot, .director-delete-archived-plot, .director-cancel-plot").length) return;
       const card = $(this).closest(".director-plot-card");
       if (card.hasClass("is-generating") || card.hasClass("is-error")) return;
       card.toggleClass("is-open");
@@ -1545,6 +1600,26 @@ function bindStaticEvents() {
   $(document)
     .off("click", ".director-remove-plot")
     .on("click", ".director-remove-plot", async function onRemovePlot() {
+      await deleteGroup($(this).data("group-id"));
+    });
+
+  $(document)
+    .off("click", ".director-cancel-plot")
+    .on("click", ".director-cancel-plot", async function onCancelPlot() {
+      await cancelGeneratingPlot($(this).data("group-id"));
+    });
+
+  $(document)
+    .off("click", ".director-restore-plot")
+    .on("click", ".director-restore-plot", async function onRestorePlot(event) {
+      event.stopPropagation();
+      await unarchiveGroup($(this).data("group-id"));
+    });
+
+  $(document)
+    .off("click", ".director-delete-archived-plot")
+    .on("click", ".director-delete-archived-plot", async function onDeleteArchivedPlot(event) {
+      event.stopPropagation();
       await deleteGroup($(this).data("group-id"));
     });
 
