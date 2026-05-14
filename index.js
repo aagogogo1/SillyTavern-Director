@@ -956,7 +956,8 @@ async function handleManualAnalysis() {
 function updateExtensionPrompt(content) {
   const context = getContext();
   if (typeof context.setExtensionPrompt === "function") {
-    context.setExtensionPrompt(extensionName, content, injectionPosition, injectionDepth, false, "system");
+    // role 必须传数字 0 (SYSTEM)，传字符串 "system" 会被 Number() 转为 NaN 导致注入被丢弃
+    context.setExtensionPrompt(extensionName, content, injectionPosition, injectionDepth, false, 0);
   }
 }
 
