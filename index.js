@@ -503,7 +503,7 @@ function archiveResolvedGroups() {
 
   for (const groupId of state.activeGroupIds) {
     const group = getLibraryGroupById(groupId);
-    if (!group) continue;
+    if (!group || group.generating || group.nodes.length === 0) continue;
     const activationState = state.activationStateByGroup[groupId] || { nodeStateById: {} };
     const allResolved = group.nodes.every((node) => isNodeResolved(normalizeNodeState(activationState.nodeStateById[node.id])));
     if (allResolved) {
