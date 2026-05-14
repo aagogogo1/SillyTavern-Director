@@ -4,8 +4,8 @@ import { saveSettingsDebounced } from "../../../../script.js";
 const extensionName = "SillyTavern-Director";
 const extensionFolderPath = `scripts/extensions/third-party/${extensionName}`;
 const chatMetadataKey = `${extensionName}:chat-state`;
-const injectionPosition = 0;
-const injectionDepth = 4;
+const injectionPosition = 2; // IN_CHAT：作为消息注入聊天历史
+const injectionDepth = 0;   // depth=0：插入在最末尾，紧贴生成前
 const floatingButtonMargin = 12;
 
 const defaultSettings = Object.freeze({
@@ -24,7 +24,6 @@ const defaultSettings = Object.freeze({
   storyBrief: "",
   generatorGroupCount: 3,
   generatorNodesPerGroup: 4,
-  nodeGroupLibrary: [],
   promptTemplates: {
     nodeGenerationSystem: [
       "你是一个故事导演策划器。",
@@ -65,6 +64,7 @@ const defaultSettings = Object.freeze({
 });
 
 const defaultChatState = Object.freeze({
+  nodeGroupLibrary: [],
   activeGroupIds: [],
   activationStateByGroup: {},
   lastMatchedNodeIds: [],
@@ -108,7 +108,6 @@ function getSettings() {
   settings.storyBrief = settings.storyBrief || "";
   settings.generatorGroupCount = clampNumber(settings.generatorGroupCount, 1, 8, defaults.generatorGroupCount);
   settings.generatorNodesPerGroup = clampNumber(settings.generatorNodesPerGroup, 1, 8, defaults.generatorNodesPerGroup);
-  settings.nodeGroupLibrary = Array.isArray(settings.nodeGroupLibrary) ? settings.nodeGroupLibrary : [];
   settings.promptTemplates = { ...defaults.promptTemplates, ...(settings.promptTemplates || {}) };
 
   return settings;
@@ -123,6 +122,7 @@ function getChatState() {
   }
 
   const state = chatMetadata[chatMetadataKey];
+  state.nodeGroupLibrary = Array.isArray(state.nodeGroupLibrary) ? state.nodeGroupLibrary : [];
   state.activeGroupIds = Array.isArray(state.activeGroupIds) ? state.activeGroupIds : [];
   state.activationStateByGroup = state.activationStateByGroup || {};
   state.lastMatchedNodeIds = Array.isArray(state.lastMatchedNodeIds) ? state.lastMatchedNodeIds : [];
@@ -189,14 +189,51 @@ function getFloatingButtonElement() {
   return $("#director_floating_button");
 }
 
+function getViewportMetrics() {
+  const visualViewport = window.visualViewport;
+  const width = visualViewport?.width || window.innerWidth || document.documentElement.clientWidth || 0;
+  const height = visualViewport?.height || window.innerHeight || document.documentElement.clientHeight || 0;
+  const offsetLeft = visualViewport?.offsetLeft || 0;
+  const offsetTop = visualViewport?.offsetTop || 0;
+
+  return {
+    width: Math.max(0, Math.round(width)),
+    height: Math.max(0, Math.round(height)),
+    offsetLeft: Math.max(0, Math.round(offsetLeft)),
+    offsetTop: Math.max(0, Math.round(offsetTop)),
+    constrained: Boolean(visualViewport && width < window.innerWidth),
+  };
+}
+
+function updateDirectorViewportState() {
+  const shell = $(".director-shell");
+  if (!shell.length) {
+    return;
+  }
+
+  const { width, height, offsetLeft, offsetTop, constrained } = getViewportMetrics();
+  shell.css({
+    "--director-viewport-width": `${width}px`,
+    "--director-viewport-height": `${height}px`,
+    "--director-viewport-offset-left": `${offsetLeft}px`,
+    "--director-viewport-offset-top": `${offsetTop}px`,
+  });
+
+  shell.toggleClass("is-compact", width <= 700);
+  shell.toggleClass("is-narrow", width <= 480);
+  shell.toggleClass("is-constrained", constrained);
+}
+
 function setFloatingButtonPosition(left, top) {
   const button = getFloatingButtonElement();
   if (!button.length) {
     return;
   }
 
-  const maxLeft = Math.max(floatingButtonMargin, window.innerWidth - button.outerWidth() - floatingButtonMargin);
-  const maxTop = Math.max(floatingButtonMargin, window.innerHeight - button.outerHeight() - floatingButtonMargin);
+  const { width: viewportWidth, height: viewportHeight } = getViewportMetrics();
+
+  const maxLeft = Math.max(floatingButtonMargin, viewportWidth - button.outerWidth() - floatingButtonMargin);
+  const maxTop = Math.max(floatingButtonMargin, viewportHeight - button.outerHeight() - floatingButtonMargin);
   const nextLeft = clampValue(left, floatingButtonMargin, maxLeft);
   const nextTop = clampValue(top, floatingButtonMargin, maxTop);
 
@@ -226,10 +263,13 @@ function ensureFloatingButtonPosition() {
     return;
   }
 
+  updateDirectorViewportState();
+
   const width = button.outerWidth() || 0;
   const height = button.outerHeight() || 0;
-  const defaultLeft = Math.max(floatingButtonMargin, window.innerWidth - width - 24);
-  const defaultTop = Math.max(floatingButtonMargin, window.innerHeight - height - 88);
+  const { width: viewportWidth, height: viewportHeight } = getViewportMetrics();
+  const defaultLeft = Math.max(floatingButtonMargin, viewportWidth - width - 24);
+  const defaultTop = Math.max(floatingButtonMargin, viewportHeight - height - 88);
   const settings = getSettings();
   const savedLeft = Number.isFinite(Number(settings.floatingButtonPosition?.left))
     ? Number(settings.floatingButtonPosition.left)
@@ -246,6 +286,7 @@ function ensureFloatingButtonPosition() {
 
 function openDirectorModal() {
   const modal = $("#director_modal");
+  updateDirectorViewportState();
   modal.addClass("is-open").attr("aria-hidden", "false");
   $("body").addClass("director-modal-open");
 }
@@ -258,18 +299,28 @@ function closeDirectorModal() {
 
 function initializeFloatingLauncher() {
   if (floatingLauncherState.initialized) {
+    updateDirectorViewportState();
     ensureFloatingButtonPosition();
     return;
   }
 
   floatingLauncherState.initialized = true;
+  updateDirectorViewportState();
   ensureFloatingButtonPosition();
+
+  const handleViewportChange = () => {
+    updateDirectorViewportState();
+    ensureFloatingButtonPosition();
+  };
 
   $(window)
     .off("resize.directorLauncher")
-    .on("resize.directorLauncher", () => {
-      ensureFloatingButtonPosition();
-    });
+    .on("resize.directorLauncher orientationchange.directorLauncher", handleViewportChange);
+
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", handleViewportChange, { passive: true });
+    window.visualViewport.addEventListener("scroll", handleViewportChange, { passive: true });
+  }
 }
 
 function serializeConversation(messages) {
@@ -339,13 +390,12 @@ function normalizeUserPlaceholder(value) {
 }
 
 function getLibraryGroupById(groupId) {
-  return getSettings().nodeGroupLibrary.find((group) => group.id === groupId) || null;
+  return getChatState().nodeGroupLibrary.find((group) => group.id === groupId) || null;
 }
 
 function syncChatStateWithLibrary() {
-  const settings = getSettings();
   const state = getChatState();
-  const validGroupIds = new Set(settings.nodeGroupLibrary.map((group) => group.id));
+  const validGroupIds = new Set(state.nodeGroupLibrary.map((group) => group.id));
 
   state.activeGroupIds = state.activeGroupIds.filter((groupId) => validGroupIds.has(groupId));
 
@@ -558,48 +608,6 @@ function renderModelSelect() {
   $("#director_model_name").val(selected);
 }
 
-function renderLibrary() {
-  const settings = getSettings();
-  const state = syncChatStateWithLibrary();
-
-  if (settings.nodeGroupLibrary.length === 0) {
-    $("#director_library_groups").html('<div class="director-empty">还没有故事节点组。先在上方输入故事概要并生成。</div>');
-    return;
-  }
-
-  const html = settings.nodeGroupLibrary.map((group) => {
-    const active = state.activeGroupIds.includes(group.id);
-    const nodes = group.nodes.map((node) => `
-      <div class="director-node-row" data-node-id="${escapeHtml(node.id)}">
-        <input class="text_pole director-node-title" type="text" value="${escapeHtml(node.title)}" placeholder="节点标题" />
-        <textarea class="text_pole director-node-content" rows="2" placeholder="节点内容">${escapeHtml(node.content)}</textarea>
-        <div class="director-node-actions">
-          <button class="menu_button director-add-node" data-group-id="${escapeHtml(group.id)}" type="button">在后面加节点</button>
-          <button class="menu_button director-delete-node" data-group-id="${escapeHtml(group.id)}" data-node-id="${escapeHtml(node.id)}" type="button">删除节点</button>
-        </div>
-      </div>
-    `).join("");
-
-    return `
-      <div class="director-card" data-group-id="${escapeHtml(group.id)}">
-        <div class="director-card-header">
-          <div>
-            <input class="text_pole director-group-title" type="text" value="${escapeHtml(group.title)}" placeholder="节点组标题" />
-            <textarea class="text_pole director-group-summary" rows="2" placeholder="该组概述">${escapeHtml(group.summary || "")}</textarea>
-          </div>
-          <div class="director-group-actions">
-            <button class="menu_button director-toggle-active" data-group-id="${escapeHtml(group.id)}" type="button">${active ? "从聊天移除" : "加入聊天"}</button>
-            <button class="menu_button director-delete-group" data-group-id="${escapeHtml(group.id)}" type="button">删除整组</button>
-          </div>
-        </div>
-        <div class="director-node-list">${nodes}</div>
-      </div>
-    `;
-  }).join("");
-
-  $("#director_library_groups").html(html);
-}
-
 function renderChatPanel() {
   const context = getContext();
   const state = syncChatStateWithLibrary();
@@ -657,7 +665,6 @@ function renderSettings() {
   $("#director_analysis_prompt").val(settings.promptTemplates.nodeAnalysisSystem);
   $("#director_injection_prompt").val(settings.promptTemplates.injectionTemplate);
   renderModelSelect();
-  renderLibrary();
   renderChatPanel();
 }
 
@@ -732,23 +739,16 @@ async function handleGenerateGroups() {
 
     const parsed = extractJsonObject(rawResult);
     const groups = normalizeGeneratedGroups(parsed.groups);
-    settings.nodeGroupLibrary.push(...groups);
-    saveSettingsDebounced();
-
-    const activeContext = getContext();
-    const hasActiveChat = Array.isArray(activeContext.chat) && activeContext.chat.length > 0;
-    if (hasActiveChat) {
-      for (const group of groups) {
-        ensureGroupActivated(group.id);
-      }
-      await saveChatState();
+    const chatState = getChatState();
+    chatState.nodeGroupLibrary.push(...groups);
+    for (const group of groups) {
+      ensureGroupActivated(group.id);
     }
+    await saveChatState();
 
-    renderLibrary();
     renderChatPanel();
-    const activatedNote = hasActiveChat ? "，已自动加入当前聊天" : "，请手动加入聊天";
-    setStatus("#director_generation_status", `已生成 ${groups.length} 组故事节点${activatedNote}`, "success");
-    toastr.success(`已生成 ${groups.length} 组故事节点${activatedNote}`, "St导演");
+    setStatus("#director_generation_status", `已生成 ${groups.length} 组故事节点，已绑定到当前聊天`, "success");
+    toastr.success(`已生成 ${groups.length} 组故事节点，已绑定到当前聊天`, "St导演");
   } catch (error) {
     console.error("Director generate groups failed", error);
     setStatus("#director_generation_status", error.message, "error");
@@ -766,6 +766,39 @@ function getAnalysisPayload() {
     chat,
     signature: buildAnalysisSignature(activeGroups, chat),
   };
+}
+
+function buildFallbackInjection(activeGroups, settings) {
+  const untriggeredNodes = [];
+  for (const group of activeGroups) {
+    for (const node of group.nodes) {
+      if (!node.triggered) {
+        untriggeredNodes.push({
+          groupTitle: group.title,
+          nodeTitle: node.title,
+          nodeContent: node.content,
+        });
+      }
+    }
+  }
+
+  if (untriggeredNodes.length === 0) {
+    return "";
+  }
+
+  const triggeredSummary = buildTriggeredSummary(activeGroups);
+  const nodeLines = untriggeredNodes.slice(0, 5).map((item, index) =>
+    `${index + 1}. \u3010\u7acb\u5373\u5f15\u5bfc\u3011 [${item.groupTitle}] ${item.nodeTitle}\n   \u76ee\u6807\uff1a${item.nodeContent}\n   \u5f15\u5bfc\u7406\u7531\uff1a\u987a\u5e94\u5f53\u524d\u5267\u60c5\u63a8\u8fdb`
+  );
+
+  return [
+    settings.promptTemplates.injectionTemplate,
+    "",
+    "\u5019\u9009\u63a8\u8fdb\u8282\u70b9\uff1a",
+    ...nodeLines,
+    "",
+    triggeredSummary ? `\u5df2\u89e6\u53d1\u8282\u70b9\u6458\u8981\uff1a\n${triggeredSummary}` : "\u5df2\u89e6\u53d1\u8282\u70b9\u6458\u8981\uff1a\u6682\u65e0",
+  ].filter(Boolean).join("\n");
 }
 
 async function buildInjectionPreview(forceRefresh = false) {
@@ -807,13 +840,24 @@ async function buildInjectionPreview(forceRefresh = false) {
     "请判断每个候选节点的融入时机（immediate/deferred），只返回 JSON。若没有合适节点，matches 返回空数组。",
   ].join("\n");
 
-  const rawResult = await callDirectorApi({
-    temperature: 0.2,
-    messages: [
-      { role: "system", content: settings.promptTemplates.nodeAnalysisSystem },
-      { role: "user", content: analysisPrompt },
-    ],
-  });
+  let rawResult;
+  try {
+    rawResult = await callDirectorApi({
+      temperature: 0.2,
+      messages: [
+        { role: "system", content: settings.promptTemplates.nodeAnalysisSystem },
+        { role: "user", content: analysisPrompt },
+      ],
+    });
+  } catch (apiError) {
+    console.warn("Director analysis API unavailable, using direct node injection:", apiError.message);
+    const fallback = normalizeUserPlaceholder(buildFallbackInjection(activeGroups, settings));
+    state.lastMatchedNodeIds = [];
+    state.lastInjectionPreview = fallback;
+    state.lastAnalysisSignature = "";
+    await saveChatState();
+    return fallback;
+  }
 
   const parsed = extractJsonObject(rawResult);
   const matches = Array.isArray(parsed.matches) ? parsed.matches : [];
@@ -899,7 +943,6 @@ async function handleGroupActivation(groupId, shouldActivate) {
     removeActivatedGroup(groupId);
   }
   await saveChatState();
-  renderLibrary();
   renderChatPanel();
 }
 
@@ -916,18 +959,18 @@ async function handleTriggerToggle(groupId, nodeId, checked) {
   renderChatPanel();
 }
 
-function updateLibraryGroupField(groupId, field, value) {
+async function updateLibraryGroupField(groupId, field, value) {
   const group = getLibraryGroupById(groupId);
   if (!group) {
     return;
   }
   group[field] = normalizeUserPlaceholder(String(value || "").trim());
   invalidateCurrentChatAnalysisCache();
-  saveSettingsDebounced();
+  await saveChatState();
   renderChatPanel();
 }
 
-function updateLibraryNodeField(groupId, nodeId, field, value) {
+async function updateLibraryNodeField(groupId, nodeId, field, value) {
   const group = getLibraryGroupById(groupId);
   const node = group?.nodes.find((candidate) => candidate.id === nodeId);
   if (!node) {
@@ -935,7 +978,7 @@ function updateLibraryNodeField(groupId, nodeId, field, value) {
   }
   node[field] = normalizeUserPlaceholder(String(value || "").trim());
   invalidateCurrentChatAnalysisCache();
-  saveSettingsDebounced();
+  await saveChatState();
   renderChatPanel();
 }
 
@@ -952,10 +995,8 @@ async function addNodeToGroup(groupId) {
   });
 
   invalidateCurrentChatAnalysisCache();
-  saveSettingsDebounced();
   syncChatStateWithLibrary();
   await saveChatState();
-  renderLibrary();
   renderChatPanel();
 }
 
@@ -972,21 +1013,17 @@ async function deleteNodeFromGroup(groupId, nodeId) {
 
   group.nodes = group.nodes.filter((node) => node.id !== nodeId);
   invalidateCurrentChatAnalysisCache();
-  saveSettingsDebounced();
   syncChatStateWithLibrary();
   await saveChatState();
-  renderLibrary();
   renderChatPanel();
 }
 
 async function deleteGroup(groupId) {
-  const settings = getSettings();
-  settings.nodeGroupLibrary = settings.nodeGroupLibrary.filter((group) => group.id !== groupId);
+  const state = getChatState();
+  state.nodeGroupLibrary = state.nodeGroupLibrary.filter((group) => group.id !== groupId);
   removeActivatedGroup(groupId);
   invalidateCurrentChatAnalysisCache();
-  saveSettingsDebounced();
   await saveChatState();
-  renderLibrary();
   renderChatPanel();
 }
 
@@ -1094,7 +1131,6 @@ function bindStaticEvents() {
     .off("input")
     .on("input", () => {
       saveAllSettings();
-      renderLibrary();
       renderChatPanel();
     });
 
@@ -1193,6 +1229,17 @@ function bindStaticEvents() {
     });
 }
 
+async function handleAfterCharacterMessage() {
+  const settings = getSettings();
+  if (!settings.enabled) return;
+  try {
+    await buildInjectionPreview(true);
+    renderChatPanel();
+  } catch (error) {
+    console.error("Director after-message analysis failed", error);
+  }
+}
+
 function bindContextEvents() {
   const context = getContext();
   if (!context?.eventSource || !context?.event_types) {
@@ -1203,6 +1250,10 @@ function bindContextEvents() {
     syncChatStateWithLibrary();
     renderChatPanel();
   });
+
+  context.eventSource.on(context.event_types.CHARACTER_MESSAGE_RENDERED, () => {
+    handleAfterCharacterMessage();
+  });
 }
 
 globalThis.stDirectorGenerateInterceptor = async function stDirectorGenerateInterceptor() {
@@ -1211,15 +1262,8 @@ globalThis.stDirectorGenerateInterceptor = async function stDirectorGenerateInte
     updateExtensionPrompt("");
     return;
   }
-
-  try {
-    const preview = await buildInjectionPreview(false);
-    updateExtensionPrompt(preview || "");
-    renderChatPanel();
-  } catch (error) {
-    console.error("Director interceptor failed", error);
-    updateExtensionPrompt("");
-  }
+  const state = getChatState();
+  updateExtensionPrompt(state.lastInjectionPreview || "");
 };
 
 jQuery(async () => {

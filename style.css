@@ -1,6 +1,10 @@
 .director-shell {
 	position: relative;
 	z-index: 3200;
+	--director-viewport-width: 100vw;
+	--director-viewport-height: 100vh;
+	--director-viewport-offset-left: 0px;
+	--director-viewport-offset-top: 0px;
 }
 
 .director-floating-button {
@@ -45,7 +49,10 @@
 
 .director-modal {
 	position: fixed;
-	inset: 0;
+	top: var(--director-viewport-offset-top, 0px);
+	left: var(--director-viewport-offset-left, 0px);
+	width: var(--director-viewport-width, 100vw);
+	height: var(--director-viewport-height, 100vh);
 	display: none;
 	align-items: center;
 	justify-content: center;
@@ -72,14 +79,127 @@ body.director-modal-open {
 	position: relative;
 	display: flex;
 	flex-direction: column;
-	width: min(1120px, calc(100vw - 48px));
-	max-height: calc(100vh - 48px);
+	width: min(1120px, calc(var(--director-viewport-width) - 48px));
+	max-width: calc(var(--director-viewport-width) - 48px);
+	min-width: 0;
+	max-height: calc(var(--director-viewport-height) - 48px);
 	border: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor, #777) 65%, transparent);
 	border-radius: 18px;
 	background: color-mix(in srgb, var(--SmartThemeBlurTintColor, #111) 90%, black 10%);
+	color: var(--SmartThemeBodyColor, #ccc);
 	box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
 	overflow: hidden;
 	z-index: 1;
+}
+
+.director-shell.is-compact .director-modal {
+	padding: 0;
+	align-items: flex-end;
+}
+
+.director-shell.is-compact .director-modal-dialog {
+	width: var(--director-viewport-width);
+	max-width: var(--director-viewport-width);
+	max-height: calc(var(--director-viewport-height) * 0.92);
+	border-radius: 16px 16px 0 0;
+}
+
+.director-shell.is-compact .director-modal-header {
+	padding: 12px 16px 10px;
+}
+
+.director-shell.is-compact .director-modal-body {
+	padding: 10px 14px 14px;
+}
+
+.director-shell.is-compact .director-modal-footer {
+	padding: 8px 14px 12px;
+}
+
+.director-shell.is-compact .director-card-header,
+.director-shell.is-compact .director-active-header {
+	flex-direction: column;
+}
+
+.director-shell.is-compact .director-grid-two {
+	grid-template-columns: 1fr;
+	gap: 8px;
+}
+
+.director-shell.is-compact .director-settings {
+	gap: 8px;
+}
+
+.director-shell.is-compact .director-field-row {
+	margin-bottom: 8px;
+	gap: 4px;
+}
+
+.director-shell.is-compact .director-button-row {
+	gap: 6px;
+	margin: 6px 0;
+}
+
+.director-shell.is-compact .director-status {
+	padding: 8px 10px;
+	margin-bottom: 8px;
+	font-size: 0.88em;
+}
+
+.director-shell.is-compact .director-card {
+	padding: 10px;
+	border-radius: 10px;
+}
+
+.director-shell.is-compact .director-node-row {
+	padding: 8px;
+}
+
+.director-shell.is-compact .director-section-title {
+	margin: 10px 0 6px;
+}
+
+.director-shell.is-compact .director-chip-list {
+	min-height: 28px;
+	gap: 6px;
+}
+
+.director-shell.is-narrow .director-modal-title {
+	font-size: 1rem;
+}
+
+.director-shell.is-narrow .director-modal-subtitle {
+	font-size: 0.82rem;
+	margin-top: 2px;
+}
+
+.director-shell.is-narrow .director-modal-close {
+	width: 32px;
+	height: 32px;
+	font-size: 1.3rem;
+}
+
+.director-shell.is-narrow .director-drawer .director-drawer-content {
+	padding-top: 6px;
+}
+
+.director-shell.is-narrow .director-group-actions,
+.director-shell.is-narrow .director-node-actions {
+	gap: 5px;
+}
+
+.director-shell.is-narrow .director-chip {
+	font-size: 0.82em;
+	padding: 3px 8px;
+}
+
+.director-shell.is-narrow .director-node-state-item {
+	padding: 8px;
+	gap: 8px;
+}
+
+.director-shell.is-narrow .director-card {
+	padding: 8px;
 }
 
 .director-modal-header {
@@ -183,6 +303,22 @@ body.director-modal-open {
 	margin: 10px 0;
 }
 
+.director-modal .menu_button {
+	width: unset;
+	max-width: 100%;
+	backface-visibility: hidden;
+	transform: translateZ(0);
+	-webkit-font-smoothing: subpixel-antialiased;
+}
+
+.director-button-row .menu_button,
+.director-group-actions .menu_button,
+.director-node-actions .menu_button {
+	flex: 0 0 auto;
+	white-space: nowrap;
+	word-break: keep-all;
+}
+
 .director-status {
 	border-radius: 10px;
 	padding: 10px 12px;
@@ -226,7 +362,8 @@ body.director-modal-open {
 	border: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor, #777) 60%, transparent);
 	border-radius: 12px;
 	padding: 12px;
-	background: color-mix(in srgb, var(--SmartThemeBodyColor, #222) 96%, white 4%);
+	background: color-mix(in srgb, var(--SmartThemeBlurTintColor, #222) 85%, white 15%);
+	color: var(--SmartThemeBodyColor, #ccc);
 }
 
 .director-card-header,
@@ -392,15 +529,119 @@ body.director-modal-open {
 		height: 40px;
 	}
 
-	.director-modal-header,
-	.director-modal-body,
+	/* 从底部弹出，更符合手机操作习惯 */
+	.director-modal {
+		padding: 0;
+		align-items: flex-end;
+	}
+
+	.director-modal-dialog {
+		width: 100vw;
+		max-height: 92dvh;
+		border-radius: 16px 16px 0 0;
+	}
+
+	.director-modal-header {
+		padding: 12px 16px 10px;
+	}
+
+	.director-modal-body {
+		padding: 10px 14px 14px;
+	}
+
 	.director-modal-footer {
-		padding-left: 14px;
-		padding-right: 14px;
+		padding: 8px 14px 12px;
 	}
 
 	.director-card-header,
 	.director-active-header {
 		flex-direction: column;
+	}
+
+	.director-grid-two {
+		grid-template-columns: 1fr;
+		gap: 8px;
+	}
+
+	.director-settings {
+		gap: 8px;
+	}
+
+	.director-field-row {
+		margin-bottom: 8px;
+		gap: 4px;
+	}
+
+	.director-button-row {
+		gap: 6px;
+		margin: 6px 0;
+	}
+
+	.director-status {
+		padding: 8px 10px;
+		margin-bottom: 8px;
+		font-size: 0.88em;
+	}
+
+	.director-card {
+		padding: 10px;
+		border-radius: 10px;
+	}
+
+	.director-node-row {
+		padding: 8px;
+	}
+
+	.director-section-title {
+		margin: 10px 0 6px;
+	}
+
+	.director-chip-list {
+		min-height: 28px;
+		gap: 6px;
+	}
+}
+
+@media (max-width: 480px) {
+	.director-modal-title {
+		font-size: 1rem;
+	}
+
+	.director-modal-subtitle {
+		font-size: 0.82rem;
+		margin-top: 2px;
+	}
+
+	.director-modal-close {
+		width: 32px;
+		height: 32px;
+		font-size: 1.3rem;
+	}
+
+	.director-drawer .director-drawer-content {
+		padding-top: 6px;
+	}
+
+	.director-group-actions,
+	.director-node-actions {
+		gap: 5px;
+	}
+
+	.director-chip {
+		font-size: 0.82em;
+		padding: 3px 8px;
+	}
+
+	.director-node-state-item {
+		padding: 8px;
+		gap: 8px;
+	}
+
+	.director-card {
+		padding: 8px;
+	}
+
+	.director-advanced-prompts {
+		margin-top: 8px;
 	}
 }
