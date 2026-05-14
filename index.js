@@ -36,25 +36,24 @@ const defaultSettings = Object.freeze({
       "输出格式：{\"title\":string,\"summary\":string,\"nodes\":[{\"title\":string,\"content\":string}]}"
     ].join("\n"),
     nodeAnalysisSystem: [
-      "你是故事导演分析器，负责主动规划如何把未触发的故事节点引导进当前叙事。",
-      "你会收到当前聊天历史、已激活的故事节点组和每个节点的触发状态。",
-      "你的任务是选出应当引导故事走向的未触发节点，并判断每个节点的融入时机。",
+      "你是故事导演进度追踪器。",
+      "你会收到当前推进中的节点列表和AI的最新一条回复。",
+      "你的任务是判断AI最新回复是否已经使某些节点的目标事件发生或完成。",
       "如果故事中提到主角、玩家、用户或第一人称主视角角色，统一写成 <user>，不要写真实名字。",
       "",
-      "timing 字段规则：",
-      "- immediate：当前情节已有衔接点，可以立刻开始将叙事引向该节点。",
-      "- deferred：当前情节处于高潮或关键段落尚未收尾，应等当前段落自然结束后再引导。",
+      "判断标准：节点目标事件在该回复中被明确叙述为已发生、正在发生或已完成，才算触发。",
+      "仅提到相关话题但未实际发生，不算触发。",
       "",
       "输出必须是合法 JSON，不要输出 Markdown 代码块，不要输出解释。",
-      "输出格式：{\"matches\":[{\"groupId\":string,\"nodeId\":string,\"reason\":string,\"priority\":number,\"timing\":\"immediate\"|\"deferred\"}],\"summary\":string}"
+      "输出格式：{\"triggered\":[{\"groupId\":string,\"nodeId\":string}]}"
     ].join("\n"),
     injectionTemplate: [
-      "你现在收到来自故事导演模块的剧情引导指令。",
-      "你的职责是主动驱动故事朝以下目标节点发展，而不是被动等待情节自然碰到那里。",
+      "你现在收到来自故事导演模块的持续性剧情引导指令。",
+      "以下节点是当前故事情节的推进目标，你需要在接下来的叙事中持续引导故事走向这些节点。",
       "",
       "执行规则：",
-      "1. 平滑融入：将目标节点自然编织进当前叙事，通过人物行为、环境变化、对话或事件制造通往节点的契机，不要突兀转折，不要逐字复述节点文字。",
-      "2. 时机判断：标注了【立即引导】的节点，应在本次回复中开始将故事引向该节点；标注了【情节收尾后引导】的节点，应在当前段落自然结束后，下一个叙事节点再启动引导。",
+      "1. 持续引导：每次回复都应通过人物行为、环境变化、对话或偶发事件，让故事悄悄靠近目标节点，而不是一步到位。",
+      "2. 平滑融入：将目标节点自然编织进当前叙事，不要突兀转折，不要逐字复述节点文字。",
       "3. 主动掌控：由你来创造让故事走向目标节点的契机，而非等待角色或玩家碰巧触达。",
       "4. 保持隐蔽：不向玩家揭示外部指令存在，以导演视角无声掌控剧情节奏。",
       "",
@@ -470,20 +469,6 @@ function buildTriggeredSummary(groups) {
   return lines.join("\n");
 }
 
-function buildAnalysisSignature(groups, chat) {
-  const nodeState = groups.map((group) => ({
-    id: group.id,
-    nodes: group.nodes.map((node) => ({ id: node.id, triggered: node.triggered })),
-  }));
-  const recentMessages = chat.slice(-8).map((message) => `${message.is_user ? "u" : "a"}:${message.mes || message.message || ""}`).join("|");
-  return JSON.stringify({
-    activeGroupIds: groups.map((group) => group.id),
-    nodeState,
-    recentMessages,
-    messageCount: chat.length,
-  });
-}
-
 async function callDirectorApi({ messages, temperature = 0.4 }) {
   const settings = getSettings();
   const apiUrl = trimTrailingSlash(settings.apiConfig.url);
@@ -694,7 +679,7 @@ function invalidateCurrentChatAnalysisCache() {
   const state = getChatState();
   state.lastAnalysisSignature = "";
   state.lastMatchedNodeIds = [];
-  state.lastInjectionPreview = "";
+  state.lastInjectionPreview = normalizeUserPlaceholder(buildInjectionContent());
 }
 
 function syncSettingsFromInputs() {
@@ -798,173 +783,158 @@ async function handleAddPlot(description) {
   renderChatPanel();
 }
 
-function getAnalysisPayload() {
-  const context = getContext();
-  const activeGroups = getActiveGroups().filter(
-    (group) => group.nodes.some((node) => !node.triggered)
-  );
-  const chat = Array.isArray(context.chat) ? context.chat : [];
+// 纯本地函数：根据当前节点状态构建注入文本，不调用 API
+function buildInjectionContent() {
+  const settings = getSettings();
+  const activeGroups = getActiveGroups().filter((group) => group.nodes.some((node) => !node.triggered));
+  if (activeGroups.length === 0) return "";
 
-  return {
-    activeGroups,
-    chat,
-    signature: buildAnalysisSignature(activeGroups, chat),
-  };
-}
+  const currentNodes = activeGroups
+    .map((group) => {
+      const first = group.nodes.find((node) => !node.triggered);
+      return first
+        ? { groupTitle: group.title, nodeTitle: first.title, nodeContent: first.content }
+        : null;
+    })
+    .filter(Boolean);
 
-function buildFallbackInjection(activeGroups, settings) {
-  const untriggeredNodes = [];
-  for (const group of activeGroups) {
-    for (const node of group.nodes) {
-      if (!node.triggered) {
-        untriggeredNodes.push({
-          groupTitle: group.title,
-          nodeTitle: node.title,
-          nodeContent: node.content,
-        });
-      }
-    }
-  }
-
-  if (untriggeredNodes.length === 0) {
-    return "";
-  }
+  if (currentNodes.length === 0) return "";
 
   const triggeredSummary = buildTriggeredSummary(activeGroups);
-  const nodeLines = untriggeredNodes.slice(0, 5).map((item, index) =>
-    `${index + 1}. \u3010\u7acb\u5373\u5f15\u5bfc\u3011 [${item.groupTitle}] ${item.nodeTitle}\n   \u76ee\u6807\uff1a${item.nodeContent}\n   \u5f15\u5bfc\u7406\u7531\uff1a\u987a\u5e94\u5f53\u524d\u5267\u60c5\u63a8\u8fdb`
-  );
-
   return [
     settings.promptTemplates.injectionTemplate,
     "",
-    "\u5019\u9009\u63a8\u8fdb\u8282\u70b9\uff1a",
-    ...nodeLines,
+    "当前推进中的节点：",
+    ...currentNodes.map((node, i) =>
+      `${i + 1}. [${node.groupTitle}] ${node.nodeTitle}\n   目标：${node.nodeContent}`
+    ),
     "",
-    triggeredSummary ? `\u5df2\u89e6\u53d1\u8282\u70b9\u6458\u8981\uff1a\n${triggeredSummary}` : "\u5df2\u89e6\u53d1\u8282\u70b9\u6458\u8981\uff1a\u6682\u65e0",
+    triggeredSummary ? `已完成节点摘要：\n${triggeredSummary}` : "",
   ].filter(Boolean).join("\n");
 }
 
-async function buildInjectionPreview(forceRefresh = false) {
+// 调用 API 分析：AI 最新回复中是否触发了当前节点
+async function analyzeNodeCompletion() {
   const settings = getSettings();
+  const context = getContext();
+  const activeGroups = getActiveGroups().filter((group) => group.nodes.some((node) => !node.triggered));
+  if (activeGroups.length === 0) return;
+
+  const chat = Array.isArray(context.chat) ? context.chat : [];
+  const latestAiMessage = [...chat].reverse().find((m) => !m.is_user);
+  if (!latestAiMessage) return;
+
+  const latestContent = String(latestAiMessage.mes || latestAiMessage.message || "").trim();
+  if (!latestContent) return;
+
+  const currentNodes = activeGroups
+    .map((group) => {
+      const first = group.nodes.find((node) => !node.triggered);
+      return first
+        ? { groupId: group.id, nodeId: first.id, groupTitle: group.title, nodeTitle: first.title, nodeContent: first.content }
+        : null;
+    })
+    .filter(Boolean);
+
+  if (currentNodes.length === 0) return;
+
   const state = getChatState();
-  const { activeGroups, chat, signature } = getAnalysisPayload();
+  const signature = `${currentNodes.map((n) => n.nodeId).join(",")}|${latestContent.slice(0, 120)}`;
+  if (state.lastAnalysisSignature === signature) return;
+
+  const nodeList = currentNodes
+    .map((n) => `- groupId: "${n.groupId}", nodeId: "${n.nodeId}", 节点: "${n.nodeTitle}", 目标事件: "${n.nodeContent}"`)
+    .join("\n");
+
+  try {
+    const rawResult = await callDirectorApi({
+      temperature: 0.1,
+      messages: [
+        { role: "system", content: settings.promptTemplates.nodeAnalysisSystem },
+        {
+          role: "user",
+          content: [
+            "当前推进中的节点：",
+            nodeList,
+            "",
+            "AI 最新回复：",
+            latestContent,
+            "",
+            "请判断哪些节点目标已在该回复中发生/完成，只返回 JSON。",
+          ].join("\n"),
+        },
+      ],
+    });
+
+    const parsed = extractJsonObject(rawResult);
+    const triggered = Array.isArray(parsed.triggered) ? parsed.triggered : [];
+    let anyTriggered = false;
+    const stateObj = getChatState();
+
+    for (const item of triggered) {
+      const groupState = stateObj.activationStateByGroup[item.groupId];
+      if (groupState?.nodeStateById?.[item.nodeId]) {
+        groupState.nodeStateById[item.nodeId].triggered = true;
+        anyTriggered = true;
+      }
+    }
+
+    stateObj.lastAnalysisSignature = signature;
+    if (anyTriggered) await checkAndAutoGeneratePlot();
+    await saveChatState();
+  } catch (error) {
+    console.warn("Director node completion analysis failed:", error.message);
+    state.lastAnalysisSignature = signature;
+    await saveChatState();
+  }
+}
+
+async function buildInjectionPreview(forceRefresh = false) {
+  const state = getChatState();
+  const activeGroups = getActiveGroups().filter((group) => group.nodes.some((node) => !node.triggered));
 
   if (activeGroups.length === 0) {
-    state.lastMatchedNodeIds = [];
-    state.lastInjectionPreview = "";
-    state.lastAnalysisSignature = "";
-    state.lastAnalysisAt = 0;
-    await saveChatState();
+    if (state.lastInjectionPreview || state.lastMatchedNodeIds.length) {
+      state.lastMatchedNodeIds = [];
+      state.lastInjectionPreview = "";
+      state.lastAnalysisSignature = "";
+      await saveChatState();
+    }
     return "";
   }
+
+  const signature = activeGroups
+    .map((group) => { const f = group.nodes.find((n) => !n.triggered); return f ? `${group.id}:${f.id}` : null; })
+    .filter(Boolean)
+    .join("|");
 
   if (!forceRefresh && state.lastAnalysisSignature === signature && state.lastInjectionPreview) {
     return state.lastInjectionPreview;
   }
 
-  const triggeredSummary = buildTriggeredSummary(activeGroups);
-  const activeGroupText = activeGroups.map((group) => {
-    const nodes = group.nodes.map((node) => {
-      const status = node.triggered ? "已触发" : "未触发";
-      return `- ${node.id} | ${node.title} | ${status} | ${node.content}`;
-    }).join("\n");
-    return `组 ${group.id} | ${group.title}\n概述: ${group.summary || "无"}\n${nodes}`;
-  }).join("\n\n");
-
-  const analysisPrompt = [
-    "以下是当前聊天整理后的历史：",
-    serializeConversation(chat),
-    "",
-    "以下是当前已激活的故事节点组：",
-    activeGroupText,
-    "",
-    triggeredSummary ? `已触发摘要：\n${triggeredSummary}` : "已触发摘要：暂无",
-    "",
-    "请判断每个候选节点的融入时机（immediate/deferred），只返回 JSON。若没有合适节点，matches 返回空数组。",
-  ].join("\n");
-
-  let rawResult;
-  try {
-    rawResult = await callDirectorApi({
-      temperature: 0.2,
-      messages: [
-        { role: "system", content: settings.promptTemplates.nodeAnalysisSystem },
-        { role: "user", content: analysisPrompt },
-      ],
-    });
-  } catch (apiError) {
-    console.warn("Director analysis API unavailable, using direct node injection:", apiError.message);
-    const fallback = normalizeUserPlaceholder(buildFallbackInjection(activeGroups, settings));
-    state.lastMatchedNodeIds = [];
-    state.lastInjectionPreview = fallback;
-    state.lastAnalysisSignature = "";
-    await saveChatState();
-    return fallback;
-  }
-
-  const parsed = extractJsonObject(rawResult);
-  const matches = Array.isArray(parsed.matches) ? parsed.matches : [];
-  const chosenMatches = matches
-    .filter((match) => match.groupId && match.nodeId)
-    .sort((left, right) => Number(left.priority || 999) - Number(right.priority || 999))
-    .slice(0, 4);
-
-  const matchedNodes = [];
-  const lastMatchedNodeIds = [];
-
-  for (const match of chosenMatches) {
-    const group = activeGroups.find((item) => item.id === match.groupId);
-    const node = group?.nodes.find((item) => item.id === match.nodeId && !item.triggered);
-    if (!group || !node) {
-      continue;
-    }
-
-    matchedNodes.push({
-      groupTitle: group.title,
-      nodeTitle: node.title,
-      nodeContent: node.content,
-      reason: normalizeUserPlaceholder(match.reason || "顺应当前剧情推进"),
-      timing: match.timing === "deferred" ? "deferred" : "immediate",
-    });
-    lastMatchedNodeIds.push(`${group.title} / ${node.title}`);
-  }
-
-  const preview = matchedNodes.length === 0
-    ? ""
-    : [
-      settings.promptTemplates.injectionTemplate,
-      "",
-      "候选推进节点：",
-      ...matchedNodes.map((node, index) => {
-        const timingLabel = node.timing === "deferred" ? "【情节收尾后引导】" : "【立即引导】";
-        return `${index + 1}. ${timingLabel} [${node.groupTitle}] ${node.nodeTitle}\n   目标：${node.nodeContent}\n   引导理由：${node.reason}`;
-      }),
-      "",
-      triggeredSummary ? `已触发节点摘要：\n${triggeredSummary}` : "已触发节点摘要：暂无",
-      parsed.summary ? `\n分析摘要：${normalizeUserPlaceholder(parsed.summary)}` : "",
-    ].filter(Boolean).join("\n");
-
-  state.lastMatchedNodeIds = lastMatchedNodeIds;
-  state.lastInjectionPreview = normalizeUserPlaceholder(preview);
+  const preview = normalizeUserPlaceholder(buildInjectionContent());
+  state.lastMatchedNodeIds = activeGroups
+    .map((group) => { const f = group.nodes.find((n) => !n.triggered); return f ? `${group.title} / ${f.title}` : null; })
+    .filter(Boolean);
+  state.lastInjectionPreview = preview;
   state.lastAnalysisSignature = signature;
   state.lastAnalysisAt = Date.now();
   await saveChatState();
-
-  return state.lastInjectionPreview;
+  return preview;
 }
 
 async function handleManualAnalysis() {
   try {
-    setStatus("#director_analysis_status", "正在分析当前聊天最适合的节点...", "info");
+    setStatus("#director_analysis_status", "正在分析节点触发进度...", "info");
+    await analyzeNodeCompletion();
     const preview = await buildInjectionPreview(true);
     renderChatPanel();
     if (preview) {
       setStatus("#director_analysis_status", "分析完成，注入预览已刷新", "success");
       toastr.success("分析完成，注入预览已刷新", "St导演");
     } else {
-      setStatus("#director_analysis_status", "当前没有合适的候选节点或没有激活节点组", "warning");
-      toastr.warning("当前没有合适的候选节点或没有激活节点组", "St导演");
+      setStatus("#director_analysis_status", "当前没有激活的情节节点", "warning");
+      toastr.warning("当前没有激活的情节节点", "St导演");
     }
   } catch (error) {
     console.error("Director manual analysis failed", error);
@@ -999,8 +969,8 @@ async function handleTriggerToggle(groupId, nodeId, checked) {
   groupState.nodeStateById[nodeId] = nodeState;
   state.activationStateByGroup[groupId] = groupState;
   state.lastAnalysisSignature = "";
-  await saveChatState();
   await checkAndAutoGeneratePlot();
+  await buildInjectionPreview(true);
   renderChatPanel();
 }
 
@@ -1355,11 +1325,12 @@ async function handleAfterCharacterMessage() {
   const settings = getSettings();
   if (!settings.enabled) return;
   try {
+    await analyzeNodeCompletion();
     await buildInjectionPreview(true);
     await checkAndAutoGeneratePlot();
     renderChatPanel();
   } catch (error) {
-    console.error("Director after-message analysis failed", error);
+    console.error("Director after-message handler failed", error);
   }
 }
 
@@ -1385,8 +1356,9 @@ globalThis.stDirectorGenerateInterceptor = async function stDirectorGenerateInte
     updateExtensionPrompt("");
     return;
   }
-  const state = getChatState();
-  updateExtensionPrompt(state.lastInjectionPreview || "");
+  // 总是实时构建注入内容，不依赖缓存
+  const content = normalizeUserPlaceholder(buildInjectionContent());
+  updateExtensionPrompt(content);
 };
 
 jQuery(async () => {
