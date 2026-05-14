@@ -25,15 +25,25 @@ const defaultSettings = Object.freeze({
   modelList: [],
   promptTemplates: {
     nodeGenerationSystem: [
-      "你是一个故事导演策划器。",
-      "你的任务是根据用户提供的情节描述，生成该情节的有序节点序列。",
-      "输出必须是合法 JSON，不要输出 Markdown 代码块，不要输出解释。",
-      "如果提到主角、玩家、用户或第一人称主视角角色，统一写成 <user>，不要写真实名字。",
-      "节点按推荐推进顺序排列，代表该情节内将依次发生的事件。",
-      "节点描述要短、可执行、可触发，且能显著推动故事。",
-      "不要生成空节点、重复节点或仅描述情绪而不推动剧情的节点。",
-      "只输出单个 JSON 对象，不要用数组或 groups 字段包裹，顶层字段只有 title、summary、nodes。",
-      "输出格式：{\"title\":string,\"summary\":string,\"nodes\":[{\"title\":string,\"content\":string}]}"
+      "你是一个故事导演策划器，同时具备剧本作家和小说编辑的创作视角。",
+      "你的任务是根据用户提供的情节构想（可能很简短或粗略），先对其进行润色和扩充，再生成该情节的有序节点序列。",
+      "",
+      "处理流程：",
+      "1. 理解意图：从用户的简短输入中推断故事背景、人物关系、核心冲突和情节走向。",
+      "2. 润色扩充：在忠实用户意图的前提下，补充合理的氛围铺垫、角色动机和情节细节，使情节更完整丰满、更具叙事张力。",
+      "3. 拆分节点：将润色后的情节拆分为有序的可执行事件节点，每个节点代表一个明确发生的关键转折或场景。",
+      "",
+      "节点要求：",
+      "- 节点按推进顺序排列，每个节点清晰描述一件具体发生的事。",
+      "- 节点内容要有画面感，包含动作、反应或环境变化，不只是抽象概念。",
+      "- 不要生成空节点、重复节点或仅描述情绪状态而不推动剧情的节点。",
+      "- 涉及主角、玩家、用户或第一人称主视角角色时，统一写成 <user>，不要写真实名字。",
+      "",
+      "输出要求：",
+      "- 输出合法 JSON，不要输出 Markdown 代码块，不要输出解释文字。",
+      "- summary 字段为润色扩充后的完整情节概述，应比用户原始输入更详细、更具文学质感。",
+      "- 只输出单个 JSON 对象，顶层字段只有 title、summary、nodes。",
+      "- 输出格式：{\"title\":string,\"summary\":string,\"nodes\":[{\"title\":string,\"content\":string}]}"
     ].join("\n"),
     nodeAnalysisSystem: [
       "你是故事导演进度追踪器。",
@@ -741,7 +751,7 @@ async function handleAddPlot(description) {
       temperature: 0.6,
       messages: [
         { role: "system", content: settings.promptTemplates.nodeGenerationSystem },
-        { role: "user", content: `情节描述：${normalizeUserPlaceholder(description)}\n请根据以上情节描述生成节点序列，严格输出 JSON。` },
+        { role: "user", content: `用户情节构想：${normalizeUserPlaceholder(description)}\n\n请充分理解上述情节构想，发挥创作想象，润色语言并丰富情节细节（补充氛围、角色动机、转折铺垫等），然后生成有序的节点序列。严格输出 JSON，不要输出任何解释。` },
       ],
     });
 
