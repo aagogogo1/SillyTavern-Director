@@ -1696,6 +1696,13 @@ async function checkAndAutoGeneratePlot() {
   const settings = getSettings();
   if (!settings.autoGeneratePlot) return;
   const state = getChatState();
+  // 检查是否有任何活跃情节（有未处理节点）
+  const activeGroups = getActiveGroups().filter((group) => group.nodes.some((node) => !isNodeResolved(node)));
+  if (activeGroups.length === 0) {
+    // 没有活跃情节时自动新建
+    handleAutoGenerateNewPlot(); // fire-and-forget
+    return;
+  }
   for (const group of state.nodeGroupLibrary) {
     if (group.generating || group.generateError || group.autoNextTriggered) continue;
     if (!group.nodes || group.nodes.length < 2) continue;
@@ -1704,11 +1711,23 @@ async function checkAndAutoGeneratePlot() {
     if (group.nodes.length - resolvedCount === 1) {
       group.autoNextTriggered = true;
       await saveChatState();
-      toastr.info(`检测到“${group.title}”即将结束，正在自动生成下一情节…`, "St导演");
       handleAutoGeneratePlot(group); // fire-and-forget
       break;
     }
   }
+}
+
+async function handleAutoGenerateNewPlot() {
+  const context = getContext();
+  const chat = Array.isArray(context?.chat) ? context.chat : [];
+  const recentMessages = chat.slice(-8);
+  const chatContext = recentMessages.length > 0 ? serializeConversation(recentMessages) : "（暂无聊天记录）";
+  const description = [
+    "【自动生成】当前没有活跃情节，请根据最近对话内容，规划一段自然推进的故事情节。",
+    "",
+    `最近对话：\n${chatContext}`,
+  ].join("\n");
+  handleAddPlot(description);
 }
 
 async function handleAutoGeneratePlot(group) {
