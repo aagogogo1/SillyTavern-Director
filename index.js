@@ -4,12 +4,14 @@ import { saveSettingsDebounced } from "../../../../script.js";
 const extensionName = "SillyTavern-Director";
 const extensionFolderPath = `scripts/extensions/third-party/${extensionName}`;
 const chatMetadataKey = `${extensionName}:chat-state`;
-const injectionPosition = 2; // IN_CHAT：作为消息注入聊天历史
+const injectionPosition = 1; // IN_CHAT：作为消息注入聊天历史
 const injectionDepth = 0;   // depth=0：插入在最末尾，紧贴生成前
 const floatingButtonMargin = 12;
 
 const defaultSettings = Object.freeze({
   enabled: true,
+  antiSpoiler: true,
+  autoGeneratePlot: true,
   floatingButtonPosition: {
     left: null,
     top: null,
@@ -21,19 +23,16 @@ const defaultSettings = Object.freeze({
     model: "",
   },
   modelList: [],
-  storyBrief: "",
-  generatorGroupCount: 3,
-  generatorNodesPerGroup: 4,
   promptTemplates: {
     nodeGenerationSystem: [
       "你是一个故事导演策划器。",
-      "你的任务是根据用户提供的故事概要，输出多组并行推进的故事事件节点。",
+      "你的任务是根据用户提供的情节描述，生成该情节的有序节点序列。",
       "输出必须是合法 JSON，不要输出 Markdown 代码块，不要输出解释。",
       "如果提到主角、玩家、用户或第一人称主视角角色，统一写成 <user>，不要写真实名字。",
-      "每组节点是并行关系，组内节点按推荐推进顺序排列。",
+      "节点按推荐推进顺序排列，代表该情节内将依次发生的事件。",
       "节点描述要短、可执行、可触发，且能显著推动故事。",
       "不要生成空节点、重复节点或仅描述情绪而不推动剧情的节点。",
-      "输出格式：{\"groups\":[{\"title\":string,\"summary\":string,\"nodes\":[{\"title\":string,\"content\":string}]}]}"
+      "输出格式：{\"title\":string,\"summary\":string,\"nodes\":[{\"title\":string,\"content\":string}]}"
     ].join("\n"),
     nodeAnalysisSystem: [
       "你是故事导演分析器，负责主动规划如何把未触发的故事节点引导进当前叙事。",
@@ -99,15 +98,14 @@ function getSettings() {
   const defaults = cloneJson(defaultSettings);
 
   settings.enabled = typeof settings.enabled === "boolean" ? settings.enabled : defaults.enabled;
+  settings.antiSpoiler = typeof settings.antiSpoiler === "boolean" ? settings.antiSpoiler : defaults.antiSpoiler;
+  settings.autoGeneratePlot = typeof settings.autoGeneratePlot === "boolean" ? settings.autoGeneratePlot : defaults.autoGeneratePlot;
   settings.floatingButtonPosition = {
     ...defaults.floatingButtonPosition,
     ...(settings.floatingButtonPosition || {}),
   };
   settings.apiConfig = { ...defaults.apiConfig, ...(settings.apiConfig || {}) };
   settings.modelList = Array.isArray(settings.modelList) ? settings.modelList : [];
-  settings.storyBrief = settings.storyBrief || "";
-  settings.generatorGroupCount = clampNumber(settings.generatorGroupCount, 1, 8, defaults.generatorGroupCount);
-  settings.generatorNodesPerGroup = clampNumber(settings.generatorNodesPerGroup, 1, 8, defaults.generatorNodesPerGroup);
   settings.promptTemplates = { ...defaults.promptTemplates, ...(settings.promptTemplates || {}) };
 
   return settings;
@@ -358,31 +356,6 @@ function extractJsonObject(value) {
   return JSON.parse(candidate.slice(firstBrace, lastBrace + 1));
 }
 
-function normalizeGeneratedGroups(rawGroups) {
-  if (!Array.isArray(rawGroups) || rawGroups.length === 0) {
-    throw new Error("模型没有返回任何节点组");
-  }
-
-  return rawGroups.map((group, groupIndex) => {
-    const nodes = Array.isArray(group.nodes) ? group.nodes : [];
-    if (nodes.length === 0) {
-      throw new Error(`第 ${groupIndex + 1} 组没有节点`);
-    }
-
-    return {
-      id: createId("group"),
-      title: String(group.title || `节点组 ${groupIndex + 1}`).trim(),
-      summary: String(group.summary || "").trim(),
-      createdAt: Date.now(),
-      nodes: nodes.map((node, nodeIndex) => ({
-        id: createId("node"),
-        title: normalizeUserPlaceholder(String(node.title || `节点 ${nodeIndex + 1}`).trim()),
-        content: normalizeUserPlaceholder(String(node.content || node.title || "").trim()),
-      })),
-    };
-  });
-}
-
 function normalizeUserPlaceholder(value) {
   return String(value || "")
     .replace(/<(?:\s*user\s*)>/gi, "<user>")
@@ -611,56 +584,102 @@ function renderModelSelect() {
 function renderChatPanel() {
   const context = getContext();
   const state = syncChatStateWithLibrary();
-  const activeGroups = getActiveGroups();
+  const { antiSpoiler } = getSettings();
   const chatName = context?.name2 || context?.groupId || "当前会话";
 
   $("#director_chat_scope").text(`当前聊天：${chatName}`);
 
-  if (activeGroups.length === 0) {
-    $("#director_active_groups").html('<div class="director-empty">当前聊天还没有激活任何节点组。去上面的节点库里点击“加入当前聊天”。</div>');
-  } else {
-    const html = activeGroups.map((group) => `
-      <div class="director-card director-active-card" data-group-id="${escapeHtml(group.id)}">
-        <div class="director-active-header">
-          <strong>${escapeHtml(group.title)}</strong>
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-            <span class="director-chip">${group.nodes.filter((node) => node.triggered).length}/${group.nodes.length} 已触发</span>
-            <button class="menu_button director-toggle-active" data-group-id="${escapeHtml(group.id)}" type="button" style="padding:2px 10px;font-size:0.82rem;">从聊天移除</button>
-          </div>
-        </div>
-        <div class="director-active-summary">${escapeHtml(group.summary || "")}</div>
-        <div class="director-node-state-list">
-          ${group.nodes.map((node) => `
-            <label class="director-node-state-item">
-              <input class="director-node-trigger" type="checkbox" data-group-id="${escapeHtml(group.id)}" data-node-id="${escapeHtml(node.id)}" ${node.triggered ? "checked" : ""} />
-              <span>
-                <strong>${escapeHtml(node.title || "未命名节点")}</strong>
-                <span>${escapeHtml(node.content)}</span>
-              </span>
-            </label>
-          `).join("")}
-        </div>
-      </div>
-    `).join("");
+  const allPlots = state.nodeGroupLibrary;
 
-    $("#director_active_groups").html(html);
+  if (allPlots.length === 0) {
+    $("#director_plot_list").html('<div class="director-empty">还没有情节，点击“新增情节”开始创建。</div>');
+  } else {
+    const html = allPlots.map((group) => {
+      if (group.generating) {
+        return `
+          <div class="director-plot-card is-generating" data-group-id="${escapeHtml(group.id)}">
+            <div class="director-plot-header">
+              <span class="director-plot-title">${escapeHtml(group.title)}</span>
+              <span class="director-chip">生成中…</span>
+            </div>
+          </div>`;
+      }
+
+      if (group.generateError) {
+        return `
+          <div class="director-plot-card is-error" data-group-id="${escapeHtml(group.id)}">
+            <div class="director-plot-header">
+              <span class="director-plot-title">${escapeHtml(group.title)}</span>
+              <span class="director-chip director-chip-error">生成失败</span>
+              <button class="menu_button director-remove-plot" data-group-id="${escapeHtml(group.id)}" type="button">移除</button>
+            </div>
+          </div>`;
+      }
+
+      const activationState = state.activationStateByGroup[group.id] || { nodeStateById: {} };
+      const triggeredCount = group.nodes.filter((node) => activationState.nodeStateById[node.id]?.triggered).length;
+
+      if (antiSpoiler) {
+        return `
+          <div class="director-plot-card is-spoiler-protected" data-group-id="${escapeHtml(group.id)}">
+            <div class="director-plot-header">
+              <strong class="director-plot-title">${escapeHtml(group.title)}</strong>
+              <span class="director-chip">${triggeredCount}/${group.nodes.length} 已触发</span>
+              <button class="menu_button director-remove-plot" data-group-id="${escapeHtml(group.id)}" type="button">移除</button>
+            </div>
+          </div>`;
+      }
+
+      return `
+        <div class="director-plot-card" data-group-id="${escapeHtml(group.id)}">
+          <div class="director-plot-header">
+            <span class="director-plot-chevron">▶</span>
+            <strong class="director-plot-title">${escapeHtml(group.title)}</strong>
+            <span class="director-chip">${triggeredCount}/${group.nodes.length} 已触发</span>
+            <button class="menu_button director-remove-plot" data-group-id="${escapeHtml(group.id)}" type="button">移除</button>
+          </div>
+          <div class="director-plot-body">
+            <div class="director-active-summary">${escapeHtml(group.summary || "")}</div>
+            <div class="director-node-state-list">
+              ${group.nodes.map((node) => {
+                const nodeState = activationState.nodeStateById[node.id] || { triggered: false };
+                return `
+                  <label class="director-node-state-item">
+                    <input class="director-node-trigger" type="checkbox" data-group-id="${escapeHtml(group.id)}" data-node-id="${escapeHtml(node.id)}" ${nodeState.triggered ? "checked" : ""} />
+                    <span>
+                      <strong>${escapeHtml(node.title || "未命名节点")}</strong>
+                      <span>${escapeHtml(node.content)}</span>
+                    </span>
+                  </label>`;
+              }).join("")}
+            </div>
+          </div>
+        </div>`;
+    }).join("");
+
+    $("#director_plot_list").html(html);
   }
 
   $("#director_last_matches").html(state.lastMatchedNodeIds.length
     ? state.lastMatchedNodeIds.map((item) => `<span class="director-chip">${escapeHtml(item)}</span>`).join("")
     : '<span class="director-empty-inline">暂无最近命中的节点</span>');
-  $("#director_injection_preview").val(state.lastInjectionPreview || "");
+  if (antiSpoiler) {
+    $("#director_injection_preview").val("（防剧透已开启，注入内容已隐藏）");
+    $("#director_injection_preview").prop("disabled", true);
+  } else {
+    $("#director_injection_preview").val(state.lastInjectionPreview || "");
+    $("#director_injection_preview").prop("disabled", false);
+  }
 }
 
 function renderSettings() {
   const settings = getSettings();
   $("#director_enabled").prop("checked", settings.enabled);
+  $("#director_anti_spoiler").prop("checked", settings.antiSpoiler);
+  $("#director_auto_generate_plot").prop("checked", settings.autoGeneratePlot);
   $("#director_connection_name").val(settings.apiConfig.name || "");
   $("#director_api_url").val(settings.apiConfig.url || "");
   $("#director_api_key").val(settings.apiConfig.apiKey || "");
-  $("#director_story_brief").val(settings.storyBrief || "");
-  $("#director_group_count").val(settings.generatorGroupCount);
-  $("#director_nodes_per_group").val(settings.generatorNodesPerGroup);
   $("#director_generation_prompt").val(settings.promptTemplates.nodeGenerationSystem);
   $("#director_analysis_prompt").val(settings.promptTemplates.nodeAnalysisSystem);
   $("#director_injection_prompt").val(settings.promptTemplates.injectionTemplate);
@@ -678,13 +697,12 @@ function invalidateCurrentChatAnalysisCache() {
 function syncSettingsFromInputs() {
   const settings = getSettings();
   settings.enabled = Boolean($("#director_enabled").prop("checked"));
+  settings.antiSpoiler = Boolean($("#director_anti_spoiler").prop("checked"));
+  settings.autoGeneratePlot = Boolean($("#director_auto_generate_plot").prop("checked"));
   settings.apiConfig.name = String($("#director_connection_name").val() || "").trim();
   settings.apiConfig.url = trimTrailingSlash($("#director_api_url").val());
   settings.apiConfig.apiKey = String($("#director_api_key").val() || "").trim();
   settings.apiConfig.model = getModelValue();
-  settings.storyBrief = String($("#director_story_brief").val() || "").trim();
-  settings.generatorGroupCount = clampNumber($("#director_group_count").val(), 1, 8, defaultSettings.generatorGroupCount);
-  settings.generatorNodesPerGroup = clampNumber($("#director_nodes_per_group").val(), 1, 8, defaultSettings.generatorNodesPerGroup);
   settings.promptTemplates.nodeGenerationSystem = String($("#director_generation_prompt").val() || "").trim();
   settings.promptTemplates.nodeAnalysisSystem = String($("#director_analysis_prompt").val() || "").trim();
   settings.promptTemplates.injectionTemplate = String($("#director_injection_prompt").val() || "").trim();
@@ -710,55 +728,73 @@ async function handleFetchModels() {
   }
 }
 
-async function handleGenerateGroups() {
+async function handleAddPlot(description) {
+  const settings = getSettings();
+  const state = getChatState();
+
+  const groupId = createId("group");
+  const placeholderGroup = {
+    id: groupId,
+    title: description.length > 24 ? description.slice(0, 24) + "…" : description,
+    summary: description,
+    generating: true,
+    nodes: [],
+    createdAt: Date.now(),
+  };
+
+  state.nodeGroupLibrary.push(placeholderGroup);
+  ensureGroupActivated(groupId);
+  await saveChatState();
+  renderChatPanel();
+
   try {
-    saveAllSettings();
-    const settings = getSettings();
-
-    if (!settings.storyBrief) {
-      throw new Error("请先输入故事概要");
-    }
-
-    setStatus("#director_generation_status", "正在生成故事节点组...", "info");
-
-    const userPrompt = [
-      `故事概要：${normalizeUserPlaceholder(settings.storyBrief)}`,
-      `需要生成 ${settings.generatorGroupCount} 组并行节点组。`,
-      `每组约 ${settings.generatorNodesPerGroup} 个节点。`,
-      "请严格输出 JSON。",
-      "如果故事里提到主角姓名，必须统一替换成 <user>。",
-    ].join("\n");
-
     const rawResult = await callDirectorApi({
       temperature: 0.6,
       messages: [
         { role: "system", content: settings.promptTemplates.nodeGenerationSystem },
-        { role: "user", content: userPrompt },
+        { role: "user", content: `情节描述：${normalizeUserPlaceholder(description)}\n请根据以上情节描述生成节点序列，严格输出 JSON。` },
       ],
     });
 
     const parsed = extractJsonObject(rawResult);
-    const groups = normalizeGeneratedGroups(parsed.groups);
-    const chatState = getChatState();
-    chatState.nodeGroupLibrary.push(...groups);
-    for (const group of groups) {
-      ensureGroupActivated(group.id);
+    const nodes = Array.isArray(parsed.nodes) ? parsed.nodes : [];
+    if (nodes.length === 0) throw new Error("模型没有返回任何节点");
+
+    const group = getLibraryGroupById(groupId);
+    if (group) {
+      group.title = normalizeUserPlaceholder(String(parsed.title || description).trim());
+      group.summary = normalizeUserPlaceholder(String(parsed.summary || description).trim());
+      group.nodes = nodes.map((node, i) => ({
+        id: createId("node"),
+        title: normalizeUserPlaceholder(String(node.title || `节点 ${i + 1}`).trim()),
+        content: normalizeUserPlaceholder(String(node.content || node.title || "").trim()),
+      }));
+      group.generating = false;
+    }
+
+    syncChatStateWithLibrary();
+    invalidateCurrentChatAnalysisCache();
+    await saveChatState();
+    toastr.success(`情节已生成：${group?.title || ""}`, "St导演");
+  } catch (error) {
+    console.error("Director plot generation failed", error);
+    const group = getLibraryGroupById(groupId);
+    if (group) {
+      group.generating = false;
+      group.generateError = error.message;
     }
     await saveChatState();
-
-    renderChatPanel();
-    setStatus("#director_generation_status", `已生成 ${groups.length} 组故事节点，已绑定到当前聊天`, "success");
-    toastr.success(`已生成 ${groups.length} 组故事节点，已绑定到当前聊天`, "St导演");
-  } catch (error) {
-    console.error("Director generate groups failed", error);
-    setStatus("#director_generation_status", error.message, "error");
-    toastr.error(error.message, "St导演");
+    toastr.error(`情节生成失败：${error.message}`, "St导演");
   }
+
+  renderChatPanel();
 }
 
 function getAnalysisPayload() {
   const context = getContext();
-  const activeGroups = getActiveGroups();
+  const activeGroups = getActiveGroups().filter(
+    (group) => group.nodes.some((node) => !node.triggered)
+  );
   const chat = Array.isArray(context.chat) ? context.chat : [];
 
   return {
@@ -956,6 +992,7 @@ async function handleTriggerToggle(groupId, nodeId, checked) {
   state.activationStateByGroup[groupId] = groupState;
   state.lastAnalysisSignature = "";
   await saveChatState();
+  await checkAndAutoGeneratePlot();
   renderChatPanel();
 }
 
@@ -1127,9 +1164,16 @@ function bindStaticEvents() {
       getFloatingButtonElement().removeClass("is-dragging");
     });
 
-  $("#director_enabled, #director_connection_name, #director_api_url, #director_api_key, #director_story_brief, #director_group_count, #director_nodes_per_group, #director_generation_prompt, #director_analysis_prompt, #director_injection_prompt")
+  $("#director_enabled, #director_connection_name, #director_api_url, #director_api_key, #director_generation_prompt, #director_analysis_prompt, #director_injection_prompt")
     .off("input")
     .on("input", () => {
+      saveAllSettings();
+      renderChatPanel();
+    });
+
+  $("#director_anti_spoiler, #director_auto_generate_plot")
+    .off("change")
+    .on("change", () => {
       saveAllSettings();
       renderChatPanel();
     });
@@ -1160,21 +1204,43 @@ function bindStaticEvents() {
     .off("click")
     .on("click", handleFetchModels);
 
-  $("#director_generate_groups")
+  $("#director_add_plot")
     .off("click")
-    .on("click", handleGenerateGroups);
+    .on("click", () => {
+      const form = $("#director_add_plot_form");
+      form.toggle();
+      if (form.is(":visible")) $("#director_plot_description").val("").focus();
+    });
+
+  $("#director_confirm_add_plot")
+    .off("click")
+    .on("click", async () => {
+      const description = String($("#director_plot_description").val() || "").trim();
+      if (!description) { toastr.warning("请先输入情节描述", "St导演"); return; }
+      $("#director_add_plot_form").hide();
+      $("#director_plot_description").val("");
+      await handleAddPlot(description);
+    });
+
+  $(document)
+    .off("click", ".director-plot-header")
+    .on("click", ".director-plot-header", function onPlotHeaderClick(event) {
+      if ($(event.target).closest(".director-remove-plot").length) return;
+      const card = $(this).closest(".director-plot-card");
+      if (card.hasClass("is-generating") || card.hasClass("is-error")) return;
+      card.toggleClass("is-open");
+      card.find(".director-plot-body").toggle(card.hasClass("is-open"));
+    });
+
+  $(document)
+    .off("click", ".director-remove-plot")
+    .on("click", ".director-remove-plot", async function onRemovePlot() {
+      await deleteGroup($(this).data("group-id"));
+    });
 
   $("#director_run_analysis")
     .off("click")
     .on("click", handleManualAnalysis);
-
-  $(document)
-    .off("click", ".director-toggle-active")
-    .on("click", ".director-toggle-active", async function toggleActive() {
-      const groupId = $(this).data("group-id");
-      const isActive = getChatState().activeGroupIds.includes(groupId);
-      await handleGroupActivation(groupId, !isActive);
-    });
 
   $(document)
     .off("change", ".director-node-trigger")
@@ -1229,11 +1295,45 @@ function bindStaticEvents() {
     });
 }
 
+async function checkAndAutoGeneratePlot() {
+  const settings = getSettings();
+  if (!settings.autoGeneratePlot) return;
+  const state = getChatState();
+  for (const group of state.nodeGroupLibrary) {
+    if (group.generating || group.generateError || group.autoNextTriggered) continue;
+    if (!group.nodes || group.nodes.length < 2) continue;
+    const activationState = state.activationStateByGroup[group.id] || { nodeStateById: {} };
+    const triggeredCount = group.nodes.filter((node) => activationState.nodeStateById[node.id]?.triggered).length;
+    if (group.nodes.length - triggeredCount === 1) {
+      group.autoNextTriggered = true;
+      await saveChatState();
+      toastr.info(`检测到“${group.title}”即将结束，正在自动生成下一情节…`, "St导演");
+      handleAutoGeneratePlot(group); // fire-and-forget
+      break;
+    }
+  }
+}
+
+async function handleAutoGeneratePlot(group) {
+  const context = getContext();
+  const chat = Array.isArray(context?.chat) ? context.chat : [];
+  const recentMessages = chat.slice(-8);
+  const chatContext = recentMessages.length > 0 ? serializeConversation(recentMessages) : "（暂无聊天记录）";
+  const description = [
+    `【自动续写】当前情节“${group.title}”已接近尾声（仅剩最后一个节点未触发）。`,
+    "请根据以下最近对话内容，规划下一段自然衬接的故事情节，使叙事流畅延续。",
+    "",
+    `最近对话：\n${chatContext}`,
+  ].join("\n");
+  return handleAddPlot(description);
+}
+
 async function handleAfterCharacterMessage() {
   const settings = getSettings();
   if (!settings.enabled) return;
   try {
     await buildInjectionPreview(true);
+    await checkAndAutoGeneratePlot();
     renderChatPanel();
   } catch (error) {
     console.error("Director after-message analysis failed", error);
