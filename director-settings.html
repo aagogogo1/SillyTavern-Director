@@ -18,7 +18,7 @@
                 <div class="director-settings">
                     <div class="director-drawer inline-drawer">
                         <div class="director-drawer-toggle inline-drawer-toggle inline-drawer-header">
-                            <b>导演模型连接</b>
+                            <b>生成连接</b>
                             <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
                         </div>
                         <div class="inline-drawer-content director-drawer-content">
@@ -29,35 +29,82 @@
 
                             <label class="director-field-row">
                                 <span>连接名称</span>
-                                <input id="director_connection_name" class="text_pole" type="text" placeholder="例如：Director API" />
+                                <input id="director_generation_connection_name" class="text_pole" type="text" placeholder="生成连接" />
                             </label>
 
                             <label class="director-field-row">
                                 <span>Base URL</span>
-                                <input id="director_api_url" class="text_pole" type="text" placeholder="https://api.openai.com/v1" />
+                                <input id="director_generation_api_url" class="text_pole" type="text" placeholder="https://api.openai.com/v1" />
                             </label>
 
                             <label class="director-field-row">
                                 <span>API Key</span>
-                                <input id="director_api_key" class="text_pole" type="password" placeholder="sk-..." />
+                                <input id="director_generation_api_key" class="text_pole" type="password" placeholder="sk-..." />
                             </label>
 
                             <label class="director-field-row">
                                 <span>模型名称</span>
-                                <input id="director_model_name" class="text_pole" type="text" placeholder="可手动填写，也可从下方模型列表选择" />
+                                <input id="director_generation_model_name" class="text_pole" type="text" placeholder="可手动填写，也可从下方模型列表选择" />
                             </label>
 
                             <label class="director-field-row">
                                 <span>已拉取模型列表</span>
-                                <select id="director_model_select" class="text_pole"></select>
+                                <select id="director_generation_model_select" class="text_pole"></select>
                             </label>
 
                             <div class="director-button-row">
-                                <button id="director_save_connection" class="menu_button" type="button">保存连接配置</button>
-                                <button id="director_fetch_models" class="menu_button" type="button">查询模型列表</button>
+                                <button id="director_save_generation_connection" class="menu_button" type="button">保存</button>
+                                <button id="director_fetch_generation_models" class="menu_button" type="button">查询模型</button>
+                                <button id="director_clone_generation_to_analysis" class="menu_button" type="button">克隆到分析连接</button>
                             </div>
 
-                            <div id="director_connection_status" class="director-status director-status-info">先填写 URL 和 API Key，再查询模型列表。</div>
+                            <div id="director_generation_connection_status" class="director-status director-status-info">先填写 URL 和 API Key，再查询模型列表。</div>
+                        </div>
+                    </div>
+
+                    <div class="director-drawer inline-drawer">
+                        <div class="director-drawer-toggle inline-drawer-toggle inline-drawer-header">
+                            <b>分析连接</b>
+                            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+                        </div>
+                        <div class="inline-drawer-content director-drawer-content">
+                            <label class="director-field-row">
+                                <span>连接名称</span>
+                                <input id="director_analysis_connection_name" class="text_pole" type="text" placeholder="分析连接" />
+                            </label>
+
+                            <label class="director-field-row">
+                                <span>Base URL</span>
+                                <input id="director_analysis_api_url" class="text_pole" type="text" placeholder="https://api.openai.com/v1" />
+                            </label>
+
+                            <label class="director-field-row">
+                                <span>API Key</span>
+                                <input id="director_analysis_api_key" class="text_pole" type="password" placeholder="sk-..." />
+                            </label>
+
+                            <label class="director-field-row">
+                                <span>模型名称</span>
+                                <input id="director_analysis_model_name" class="text_pole" type="text" placeholder="可手动填写，也可从下方模型列表选择" />
+                            </label>
+
+                            <label class="director-field-row">
+                                <span>已拉取模型列表</span>
+                                <select id="director_analysis_model_select" class="text_pole"></select>
+                            </label>
+
+                            <label class="director-field-row">
+                                <span>分析携带聊天历史条数</span>
+                                <input id="director_analysis_history_depth" class="text_pole" type="number" min="1" max="50" placeholder="10" />
+                            </label>
+
+                            <div class="director-button-row">
+                                <button id="director_save_analysis_connection" class="menu_button" type="button">保存</button>
+                                <button id="director_fetch_analysis_models" class="menu_button" type="button">查询模型</button>
+                                <button id="director_clone_analysis_to_generation" class="menu_button" type="button">克隆到生成连接</button>
+                            </div>
+
+                            <div id="director_analysis_connection_status" class="director-status director-status-info">先填写 URL 和 API Key，再查询模型列表。</div>
                         </div>
                     </div>
 

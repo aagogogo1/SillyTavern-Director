@@ -16,13 +16,21 @@ const defaultSettings = Object.freeze({
     left: null,
     top: null,
   },
-  apiConfig: {
-    name: "Director API",
+  generationApi: {
+    name: "生成连接",
     url: "https://api.openai.com/v1",
     apiKey: "",
     model: "",
+    modelList: [],
   },
-  modelList: [],
+  analysisApi: {
+    name: "分析连接",
+    url: "https://api.openai.com/v1",
+    apiKey: "",
+    model: "",
+    modelList: [],
+  },
+  analysisHistoryDepth: 10,
   promptTemplates: {
     nodeGenerationSystem: [
       "你是一个故事导演策划器，同时具备剧本作家和小说编辑的创作视角。",
@@ -114,8 +122,18 @@ function getSettings() {
     ...defaults.floatingButtonPosition,
     ...(settings.floatingButtonPosition || {}),
   };
-  settings.apiConfig = { ...defaults.apiConfig, ...(settings.apiConfig || {}) };
-  settings.modelList = Array.isArray(settings.modelList) ? settings.modelList : [];
+  // 向后兼容：迁移旧的 apiConfig 到 generationApi
+  if (settings.apiConfig && !settings.generationApi) {
+    settings.generationApi = { ...defaults.generationApi, ...settings.apiConfig };
+    if (Array.isArray(settings.modelList)) settings.generationApi.modelList = settings.modelList;
+    delete settings.apiConfig;
+    delete settings.modelList;
+  }
+  settings.generationApi = { ...defaults.generationApi, ...(settings.generationApi || {}) };
+  settings.generationApi.modelList = Array.isArray(settings.generationApi.modelList) ? settings.generationApi.modelList : [];
+  settings.analysisApi = { ...defaults.analysisApi, ...(settings.analysisApi || {}) };
+  settings.analysisApi.modelList = Array.isArray(settings.analysisApi.modelList) ? settings.analysisApi.modelList : [];
+  settings.analysisHistoryDepth = clampNumber(settings.analysisHistoryDepth, 1, 50, defaults.analysisHistoryDepth);
   settings.promptTemplates = { ...defaults.promptTemplates, ...(settings.promptTemplates || {}) };
 
   return settings;
@@ -178,11 +196,6 @@ function createId(prefix) {
 
 function trimTrailingSlash(value) {
   return String(value || "").replace(/\/+$/, "");
-}
-
-function getModelValue() {
-  const explicitValue = $("#director_model_name").val();
-  return String(explicitValue || "").trim();
 }
 
 function setStatus(selector, message, type = "info") {
@@ -479,23 +492,25 @@ function buildTriggeredSummary(groups) {
   return lines.join("\n");
 }
 
-async function callDirectorApi({ messages, temperature = 0.4 }) {
+async function callDirectorApi({ messages, temperature = 0.4, apiType = "generation" }) {
   const settings = getSettings();
-  const apiUrl = trimTrailingSlash(settings.apiConfig.url);
-  const apiKey = String(settings.apiConfig.apiKey || "").trim();
-  const model = String(settings.apiConfig.model || "").trim();
+  const config = apiType === "analysis" ? settings.analysisApi : settings.generationApi;
+  const apiUrl = trimTrailingSlash(config.url);
+  const apiKey = String(config.apiKey || "").trim();
+  const model = String(config.model || "").trim();
+  const label = apiType === "analysis" ? "分析" : "生成";
 
   if (!settings.enabled) {
     throw new Error("导演插件当前已禁用");
   }
   if (!apiUrl) {
-    throw new Error("请先填写 API URL");
+    throw new Error(`请先填写${label}连接的 API URL`);
   }
   if (!apiKey) {
-    throw new Error("请先填写 API Key");
+    throw new Error(`请先填写${label}连接的 API Key`);
   }
   if (!model) {
-    throw new Error("请先选择或填写模型名称");
+    throw new Error(`请先选择或填写${label}连接的模型名称`);
   }
 
   const response = await fetch(`${apiUrl}/chat/completions`, {
@@ -530,16 +545,18 @@ async function callDirectorApi({ messages, temperature = 0.4 }) {
   return String(content);
 }
 
-async function fetchModelsList() {
+async function fetchModelsList(apiType = "generation") {
   const settings = getSettings();
-  const apiUrl = trimTrailingSlash(settings.apiConfig.url);
-  const apiKey = String(settings.apiConfig.apiKey || "").trim();
+  const config = apiType === "analysis" ? settings.analysisApi : settings.generationApi;
+  const apiUrl = trimTrailingSlash(config.url);
+  const apiKey = String(config.apiKey || "").trim();
+  const label = apiType === "analysis" ? "分析" : "生成";
 
   if (!apiUrl) {
-    throw new Error("请先填写 API URL");
+    throw new Error(`请先填写${label}连接的 API URL`);
   }
   if (!apiKey) {
-    throw new Error("请先填写 API Key");
+    throw new Error(`请先填写${label}连接的 API Key`);
   }
 
   const response = await fetch(`${apiUrl}/models`, {
@@ -556,25 +573,26 @@ async function fetchModelsList() {
 
   const data = await response.json();
   const models = Array.isArray(data?.data) ? data.data : (Array.isArray(data?.models) ? data.models : []);
-  settings.modelList = models.map((model) => ({
+  config.modelList = models.map((model) => ({
     id: model.id || model.name || model.model || String(model),
   }));
   saveSettingsDebounced();
-  return settings.modelList;
+  return config.modelList;
 }
 
-function renderModelSelect() {
+function renderModelSelectFor(apiType) {
   const settings = getSettings();
-  const selected = settings.apiConfig.model || "";
+  const config = apiType === "analysis" ? settings.analysisApi : settings.generationApi;
+  const selected = config.model || "";
   const options = ['<option value="">选择已拉取模型</option>']
-    .concat(settings.modelList.map((model) => {
+    .concat((config.modelList || []).map((model) => {
       const id = escapeHtml(model.id);
       const isSelected = model.id === selected ? " selected" : "";
       return `<option value="${id}"${isSelected}>${id}</option>`;
     }));
-
-  $("#director_model_select").html(options.join(""));
-  $("#director_model_name").val(selected);
+  const prefix = apiType === "analysis" ? "analysis" : "generation";
+  $(`#director_${prefix}_model_select`).html(options.join(""));
+  $(`#director_${prefix}_model_name`).val(selected);
 }
 
 function renderChatPanel() {
@@ -675,13 +693,18 @@ function renderSettings() {
   $("#director_enabled").prop("checked", settings.enabled);
   $("#director_anti_spoiler").prop("checked", settings.antiSpoiler);
   $("#director_auto_generate_plot").prop("checked", settings.autoGeneratePlot);
-  $("#director_connection_name").val(settings.apiConfig.name || "");
-  $("#director_api_url").val(settings.apiConfig.url || "");
-  $("#director_api_key").val(settings.apiConfig.apiKey || "");
+  $("#director_generation_connection_name").val(settings.generationApi.name || "");
+  $("#director_generation_api_url").val(settings.generationApi.url || "");
+  $("#director_generation_api_key").val(settings.generationApi.apiKey || "");
+  $("#director_analysis_connection_name").val(settings.analysisApi.name || "");
+  $("#director_analysis_api_url").val(settings.analysisApi.url || "");
+  $("#director_analysis_api_key").val(settings.analysisApi.apiKey || "");
+  $("#director_analysis_history_depth").val(settings.analysisHistoryDepth);
   $("#director_generation_prompt").val(settings.promptTemplates.nodeGenerationSystem);
   $("#director_analysis_prompt").val(settings.promptTemplates.nodeAnalysisSystem);
   $("#director_injection_prompt").val(settings.promptTemplates.injectionTemplate);
-  renderModelSelect();
+  renderModelSelectFor("generation");
+  renderModelSelectFor("analysis");
   renderChatPanel();
 }
 
@@ -697,10 +720,15 @@ function syncSettingsFromInputs() {
   settings.enabled = Boolean($("#director_enabled").prop("checked"));
   settings.antiSpoiler = Boolean($("#director_anti_spoiler").prop("checked"));
   settings.autoGeneratePlot = Boolean($("#director_auto_generate_plot").prop("checked"));
-  settings.apiConfig.name = String($("#director_connection_name").val() || "").trim();
-  settings.apiConfig.url = trimTrailingSlash($("#director_api_url").val());
-  settings.apiConfig.apiKey = String($("#director_api_key").val() || "").trim();
-  settings.apiConfig.model = getModelValue();
+  settings.generationApi.name = String($("#director_generation_connection_name").val() || "").trim();
+  settings.generationApi.url = trimTrailingSlash($("#director_generation_api_url").val());
+  settings.generationApi.apiKey = String($("#director_generation_api_key").val() || "").trim();
+  settings.generationApi.model = String($("#director_generation_model_name").val() || "").trim();
+  settings.analysisApi.name = String($("#director_analysis_connection_name").val() || "").trim();
+  settings.analysisApi.url = trimTrailingSlash($("#director_analysis_api_url").val());
+  settings.analysisApi.apiKey = String($("#director_analysis_api_key").val() || "").trim();
+  settings.analysisApi.model = String($("#director_analysis_model_name").val() || "").trim();
+  settings.analysisHistoryDepth = clampNumber($("#director_analysis_history_depth").val(), 1, 50, 10);
   settings.promptTemplates.nodeGenerationSystem = String($("#director_generation_prompt").val() || "").trim();
   settings.promptTemplates.nodeAnalysisSystem = String($("#director_analysis_prompt").val() || "").trim();
   settings.promptTemplates.injectionTemplate = String($("#director_injection_prompt").val() || "").trim();
@@ -711,17 +739,18 @@ function saveAllSettings() {
   saveSettingsDebounced();
 }
 
-async function handleFetchModels() {
+async function handleFetchModelsFor(apiType) {
+  const statusId = apiType === "analysis" ? "#director_analysis_connection_status" : "#director_generation_connection_status";
   try {
     saveAllSettings();
-    setStatus("#director_connection_status", "正在拉取模型列表...", "info");
-    const models = await fetchModelsList();
-    renderModelSelect();
-    setStatus("#director_connection_status", `已获取 ${models.length} 个模型`, "success");
+    setStatus(statusId, "正在拉取模型列表...", "info");
+    const models = await fetchModelsList(apiType);
+    renderModelSelectFor(apiType);
+    setStatus(statusId, `已获取 ${models.length} 个模型`, "success");
     toastr.success(`已获取 ${models.length} 个模型`, "St导演");
   } catch (error) {
     console.error("Director fetch models failed", error);
-    setStatus("#director_connection_status", error.message, "error");
+    setStatus(statusId, error.message, "error");
     toastr.error(error.message, "St导演");
   }
 }
@@ -749,6 +778,7 @@ async function handleAddPlot(description) {
   try {
     const rawResult = await callDirectorApi({
       temperature: 0.6,
+      apiType: "generation",
       messages: [
         { role: "system", content: settings.promptTemplates.nodeGenerationSystem },
         { role: "user", content: `用户情节构想：${normalizeUserPlaceholder(description)}\n\n请充分理解上述情节构想，发挥创作想象，润色语言并丰富情节细节（补充氛围、角色动机、转折铺垫等），然后生成有序的节点序列。严格输出 JSON，不要输出任何解释。` },
@@ -831,11 +861,10 @@ async function analyzeNodeCompletion() {
   if (activeGroups.length === 0) return;
 
   const chat = Array.isArray(context.chat) ? context.chat : [];
-  const latestAiMessage = [...chat].reverse().find((m) => !m.is_user);
-  if (!latestAiMessage) return;
-
-  const latestContent = String(latestAiMessage.mes || latestAiMessage.message || "").trim();
-  if (!latestContent) return;
+  const historyDepth = settings.analysisHistoryDepth || 10;
+  const recentMessages = chat.slice(-historyDepth);
+  if (recentMessages.length === 0) return;
+  const chatContext = serializeConversation(recentMessages);
 
   const currentNodes = activeGroups
     .map((group) => {
@@ -849,7 +878,7 @@ async function analyzeNodeCompletion() {
   if (currentNodes.length === 0) return;
 
   const state = getChatState();
-  const signature = `${currentNodes.map((n) => n.nodeId).join(",")}|${latestContent.slice(0, 120)}`;
+  const signature = `${currentNodes.map((n) => n.nodeId).join(",")}|${chatContext.slice(0, 200)}`;
   if (state.lastAnalysisSignature === signature) return;
 
   const nodeList = currentNodes
@@ -859,6 +888,7 @@ async function analyzeNodeCompletion() {
   try {
     const rawResult = await callDirectorApi({
       temperature: 0.1,
+      apiType: "analysis",
       messages: [
         { role: "system", content: settings.promptTemplates.nodeAnalysisSystem },
         {
@@ -867,10 +897,10 @@ async function analyzeNodeCompletion() {
             "当前推进中的节点：",
             nodeList,
             "",
-            "AI 最新回复：",
-            latestContent,
+            `最近 ${recentMessages.length} 条聊天记录：`,
+            chatContext,
             "",
-            "请判断哪些节点目标已在该回复中发生/完成，只返回 JSON。",
+            "请判断哪些节点目标已在上述聊天记录中发生/完成，只返回 JSON。",
           ].join("\n"),
         },
       ],
@@ -1153,7 +1183,7 @@ function bindStaticEvents() {
       getFloatingButtonElement().removeClass("is-dragging");
     });
 
-  $("#director_enabled, #director_connection_name, #director_api_url, #director_api_key, #director_generation_prompt, #director_analysis_prompt, #director_injection_prompt")
+  $("#director_enabled, #director_generation_connection_name, #director_generation_api_url, #director_generation_api_key, #director_analysis_connection_name, #director_analysis_api_url, #director_analysis_api_key, #director_generation_prompt, #director_analysis_prompt, #director_injection_prompt")
     .off("input")
     .on("input", () => {
       saveAllSettings();
@@ -1167,31 +1197,75 @@ function bindStaticEvents() {
       renderChatPanel();
     });
 
-  $("#director_model_name")
+  $("#director_analysis_history_depth")
     .off("input")
-    .on("input", () => {
-      saveAllSettings();
-      renderModelSelect();
-    });
+    .on("input", () => { saveAllSettings(); });
 
-  $("#director_model_select")
+  $("#director_generation_model_name")
+    .off("input")
+    .on("input", () => { saveAllSettings(); renderModelSelectFor("generation"); });
+
+  $("#director_analysis_model_name")
+    .off("input")
+    .on("input", () => { saveAllSettings(); renderModelSelectFor("analysis"); });
+
+  $("#director_generation_model_select")
     .off("change")
-    .on("change", function onModelSelected() {
-      $("#director_model_name").val($(this).val());
+    .on("change", function () {
+      $("#director_generation_model_name").val($(this).val());
       saveAllSettings();
     });
 
-  $("#director_save_connection")
+  $("#director_analysis_model_select")
+    .off("change")
+    .on("change", function () {
+      $("#director_analysis_model_name").val($(this).val());
+      saveAllSettings();
+    });
+
+  $("#director_save_generation_connection")
     .off("click")
     .on("click", () => {
       saveAllSettings();
-      setStatus("#director_connection_status", "连接配置已保存", "success");
-      toastr.success("连接配置已保存", "St导演");
+      setStatus("#director_generation_connection_status", "生成连接配置已保存", "success");
+      toastr.success("生成连接配置已保存", "St导演");
     });
 
-  $("#director_fetch_models")
+  $("#director_fetch_generation_models")
     .off("click")
-    .on("click", handleFetchModels);
+    .on("click", () => handleFetchModelsFor("generation"));
+
+  $("#director_clone_generation_to_analysis")
+    .off("click")
+    .on("click", () => {
+      const s = getSettings();
+      Object.assign(s.analysisApi, { url: s.generationApi.url, apiKey: s.generationApi.apiKey, model: s.generationApi.model });
+      saveSettingsDebounced();
+      renderSettings();
+      toastr.success("已将生成连接克隆到分析连接", "St导演");
+    });
+
+  $("#director_save_analysis_connection")
+    .off("click")
+    .on("click", () => {
+      saveAllSettings();
+      setStatus("#director_analysis_connection_status", "分析连接配置已保存", "success");
+      toastr.success("分析连接配置已保存", "St导演");
+    });
+
+  $("#director_fetch_analysis_models")
+    .off("click")
+    .on("click", () => handleFetchModelsFor("analysis"));
+
+  $("#director_clone_analysis_to_generation")
+    .off("click")
+    .on("click", () => {
+      const s = getSettings();
+      Object.assign(s.generationApi, { url: s.analysisApi.url, apiKey: s.analysisApi.apiKey, model: s.analysisApi.model });
+      saveSettingsDebounced();
+      renderSettings();
+      toastr.success("已将分析连接克隆到生成连接", "St导演");
+    });
 
   $("#director_add_plot")
     .off("click")
