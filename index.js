@@ -32,6 +32,7 @@ const defaultSettings = Object.freeze({
   },
   analysisHistoryDepth: 10,
   nodeGenerationCount: 4,
+  generationHistoryDepth: 10,
   promptTemplates: {
     nodeGenerationSystem: [
       "你是一个故事导演策划器，同时具备剧本作家和小说编辑的创作视角。",
@@ -151,6 +152,7 @@ function getSettings() {
   settings.analysisApi.modelList = Array.isArray(settings.analysisApi.modelList) ? settings.analysisApi.modelList : [];
   settings.analysisHistoryDepth = clampNumber(settings.analysisHistoryDepth, 1, 50, defaults.analysisHistoryDepth);
   settings.nodeGenerationCount = clampNumber(settings.nodeGenerationCount, 1, 50, defaults.nodeGenerationCount);
+  settings.generationHistoryDepth = clampNumber(settings.generationHistoryDepth, 1, 100, defaults.generationHistoryDepth);
   settings.promptTemplates = { ...defaults.promptTemplates, ...(settings.promptTemplates || {}) };
 
   return settings;
@@ -859,6 +861,7 @@ function renderSettings() {
   $("#director_analysis_api_key").val(settings.analysisApi.apiKey || "");
   $("#director_analysis_history_depth").val(settings.analysisHistoryDepth);
   $("#director_node_generation_count").val(settings.nodeGenerationCount);
+  $("#director_generation_history_depth").val(settings.generationHistoryDepth);
   $("#director_generation_prompt").val(settings.promptTemplates.nodeGenerationSystem);
   $("#director_analysis_prompt").val(settings.promptTemplates.nodeAnalysisSystem);
   $("#director_injection_prompt").val(settings.promptTemplates.injectionTemplate);
@@ -889,6 +892,7 @@ function syncSettingsFromInputs() {
   settings.analysisApi.model = String($("#director_analysis_model_name").val() || "").trim();
   settings.analysisHistoryDepth = clampNumber($("#director_analysis_history_depth").val(), 1, 50, 10);
   settings.nodeGenerationCount = clampNumber($("#director_node_generation_count").val(), 1, 50, 4);
+  settings.generationHistoryDepth = clampNumber($("#director_generation_history_depth").val(), 1, 100, 10);
   settings.promptTemplates.nodeGenerationSystem = String($("#director_generation_prompt").val() || "").trim();
   settings.promptTemplates.nodeAnalysisSystem = String($("#director_analysis_prompt").val() || "").trim();
   settings.promptTemplates.injectionTemplate = String($("#director_injection_prompt").val() || "").trim();
@@ -936,12 +940,22 @@ async function handleAddPlot(description) {
   renderChatPanel();
 
   try {
+    const context = getContext();
+    const chat = Array.isArray(context.chat) ? context.chat : [];
+    const historyDepth = settings.generationHistoryDepth || 10;
+    const recentMessages = chat.slice(-historyDepth);
+    const chatContext = recentMessages.length > 0 ? serializeConversation(recentMessages) : "";
+
+    const userContent = chatContext
+      ? `最近聊天记录：\n${chatContext}\n\n请结合上述对话背景，理解当前故事进度和角色关系，然后对以下用户情节构想进行润色和扩充，使生成的情节节点与当前叙事自然衔接。\n\n用户情节构想：${normalizeUserPlaceholder(description)}\n\n请充分理解上述情节构想，发挥创作想象，润色语言并丰富情节细节（补充氛围、角色动机、转折铺垫等），然后生成有序的节点序列。请严格生成 ${settings.nodeGenerationCount} 个节点，不要多也不要少。严格输出 JSON，不要输出任何解释。`
+      : `用户情节构想：${normalizeUserPlaceholder(description)}\n\n请充分理解上述情节构想，发挥创作想象，润色语言并丰富情节细节（补充氛围、角色动机、转折铺垫等），然后生成有序的节点序列。请严格生成 ${settings.nodeGenerationCount} 个节点，不要多也不要少。严格输出 JSON，不要输出任何解释。`;
+
     const rawResult = await callDirectorApi({
       temperature: 0.6,
       apiType: "generation",
       messages: [
         { role: "system", content: settings.promptTemplates.nodeGenerationSystem },
-        { role: "user", content: `用户情节构想：${normalizeUserPlaceholder(description)}\n\n请充分理解上述情节构想，发挥创作想象，润色语言并丰富情节细节（补充氛围、角色动机、转折铺垫等），然后生成有序的节点序列。请严格生成 ${settings.nodeGenerationCount} 个节点，不要多也不要少。严格输出 JSON，不要输出任何解释。` },
+        { role: "user", content: userContent },
       ],
     });
 
